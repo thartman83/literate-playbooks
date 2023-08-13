@@ -1,0 +1,84 @@
+---
+- name: Custom Arch ISO playbook
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    workingdir: "/tmp/archiso-custom"
+    archlive_dir: "{{ workingdir }}/archlive"
+    ai_profile_path: "/usr/share/archiso/configs"
+    ai_profile: "releng"
+    img_dir: "/var/tmp"
+    ssh_pub_key: "/home/thartman/.ssh/archiso-root_rsa.pub"
+
+  tasks:
+
+    - name: Install archiso package
+      community.general.pacman:
+        name: archiso
+        state: installed
+
+    - name: Create the archiso live working environment
+      ansible.builtin.file:
+        path: "{{ workingdir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy the release archsio profile to the working environment
+      ansible.builtin.copy:
+        src: "{{ ai_profile_path }}/{{ ai_profile }}/"
+        dest: "{{ archlive_dir }}"
+        mode: '0755'
+
+    - name: Disable root ssh login via password
+      ansible.builtin.lineinfile:
+        path: "{{ archlive_dir }}/airootfs/etc/ssh/sshd_config"
+        line: "PermitRootLogin prohibit-password"
+
+    - name: Enable Public key authentication
+      ansible.builtin.lineinfile:
+        path: "{{ archlive_dir }}/airootfs/etc/ssh/sshd_config"
+        line: "PubkeyAuthentication yes"
+
+    - name: Remove any existing sshd service
+      ansible.builtin.file:
+        path: "{{ archlive_dir }}/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service"
+        state: absent
+
+    - name: Enable sshd by default
+      ansible.builtin.file:
+        src: "/usr/lib/systemd/system/sshd.service"
+        dest: "{{ archlive_dir }}/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service"
+        state: link
+
+    - name: Enable DHCP by default
+      ansible.builtin.file:
+        src: "/usr/lib/systemd/system/dhcpcd.service"
+        dest: "{{ archlive_dir }}/airootfs/etc/systemd/system/multi-user.target.wants/dhcpcd.service"
+        state: link
+
+    - name: Create the .ssh folder for the root user
+      ansible.builtin.file:
+        path: "{{ archlive_dir }}/airootfs/root/.ssh/"
+        state: directory
+
+    - name: Make sure that the authorized keys file is present in the root .ssh directory
+      ansible.builtin.file:
+        path: "{{ archlive_dir }}/airootfs/root/.ssh/authorized_keys"
+        state: touch
+        mode: '0755'
+
+    - name: Update the authorized keys file in the root .ssh directory
+      ansible.builtin.lineinfile:
+        path: "{{ archlive_dir }}/airootfs/root/.ssh/authorized_keys"
+        line: "{{ lookup('file', ssh_pub_key ) }}"
+
+    - name: Build the arch image
+      ansible.builtin.shell:
+        cmd: "mkarchiso -v -w {{ workingdir }}/work -o {{ workingdir }} {{ archlive_dir }}"
+
+    - name: Clean up the work dir that was created to build the image
+      ansible.builtin.file:
+        path: "{{ workingdir }}"
+        state: absent

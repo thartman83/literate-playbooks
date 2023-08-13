@@ -1,0 +1,247 @@
+#+TITLE: Archiso Playbook
+#+AUTHOR: Tom Hartman
+#+STARTUP: overview
+
+* General
+
+Documentation and Ansible playbook to automatically generate custom arch installation iimage that can be used to install arch on another machine or to be used as a general bootable live environment. Currently the image is built off of the current release profile and contains the following customizations:
+
+- Automatic DHCP
+- SSH deamon service
+- Root ssh key authentication
+
+  The purpose of the playbook is also to provide a good starting point for building other custom arch live environment images for any future needs, automating as much as possible using ansible. The purpose of this portion of the repositoy more generally is to document the process as well.
+
+** References
+
+Must of this guide is based of the work found in the arch wiki for archiso which can be found [[https://wiki.archlinux.org/title/Archiso][here]]. It is a good reference point if you need to make additional customizations and updates and run into trouble.
+
+** Prereqs
+
+This playbook can only be run on an existing arch installation. Attempting to do so on another operating system will result in an error when attempting. In my case I run this on localhost though there is nothing preventing someone from running this against a remote arch host as well.
+
+Additionally the ansible script requires as one of its variables a path to the public key of a ssh key pair. This will need to be generated prior to running the playbook as well and is outside the scope of this guide. More information can be found in the next section regarding variables.
+
+** Using this README
+This README also doubles as a org babel tangle file. What that means is that if you open this file within emacs and make edits to the yaml code blocks, you can 'tangle' the org file by calling
+
+M-x org-babel-tangle
+
+And it should regenerate the main.yml ansible playbook with the modifications. Aside from being able to document each part of the playbook in a literate way instead of just using comments it also allows for the user to read the guide and make edits as they are reading in the relevant locations.
+
+Emacs is definitely not required to use this guide or playbook and describing the full breath and features of org-babel in terms of literate programming let only org mode in general is far beyond the scope of this guide. It is what I use and not an attempt to re-ignite the great Vi vs Emacs flame war.
+
+* Playbook Definition
+** Basic setup
+
+A number of the tasks within this playbook do require running as root, so we will need to include `become: true' as part of the playbook definition. Additionally we need to tell ansible which host we want to run this on. For me that is localhost but it doesn't have to be.
+
+#+begin_src yaml :tangle main.yml
+---
+- name: Custom Arch ISO playbook
+  hosts: localhost
+  connection: local
+  become: true
+
+#+end_src
+
+** Variables
+
+The ansible playbook defines the following variables.
+
+#+begin_src yaml :tangle main.yml
+  vars:
+    workingdir: "/tmp/archiso-custom"
+    archlive_dir: "{{ workingdir }}/archlive"
+    ai_profile_path: "/usr/share/archiso/configs"
+    ai_profile: "releng"
+    img_dir: "/var/tmp"
+    ssh_pub_key: "/home/thartman/.ssh/archiso-root_rsa.pub"
+#+end_src
+
+- workingdir: The working directory where the profile for the new image will be generated and modified as well as the location of the directory where the image will be built. This folder should be considered temporary and is automatically deleted after the image is generated.
+
+- archlive_dir: The location of the custom image profile. Starting with the profile template this is where we define the image customizations that will built into the resulting image. This include files to be add to the image, packages to be available on boot, as well as automatically starting services.
+
+- ai_profile_path: The location on the host machine where the archsio profile templates can be found. This value will likely not change but is a good idea to keep as a variable in case that it does.
+
+- ai_profile: The name of the profile to use as the base template for the image. By default, arch comes with two profiles releng and baseline. Releng  is the English release version which should mirror what you would find on the arch website in terms of release images. Baseline is the barebones profile to provides basically the bare minimum that you would need to install arch. While significantly smaller and requiring less build time, baseline is a bit too sparse in terms of features and pre-configured elements (missing default mirrors and other utilities). For this current version I'm using releng for convenience though it would probably be worth it at some point to revisit and consider creating a baseline version
+
+- img_dir: The location where the image will be exported to. This could just simply be root but I don't love polluting the file space like that so /var/tmp/ seems like a sensible location for it by default. Again feel free to change this based on your preferences.
+
+- ssh_pub_key: The location on the local host where the public key of the ssh key pair resides that will be used to provide key based login as root into the live environment. This will be copied into the image and be available as an authorized key for the root account. Because we will be running this using sudo (see Basic Setup) we can't use the relative user path as ~/ becomes the root users home directory which is not where I keep ssh keys This should be updated or otherwise overridden with the location of the key you generated for the installation image.
+
+** Playbook Tasks
+
+Now with the setup out of the way lets define our tasks
+
+#+begin_src yaml :tangle main.yml
+  tasks:
+#+end_src
+
+*** Install required  packages on the target machine
+
+In order to build the image we will need to make sure the archsio package is installed. This will install the default image profiles as well as a few tools to create and test the image later on in the playbook. There are AUR packages as well as other custom profiles available out there. If there is a need to include those they should go here as well.
+
+#+begin_src yaml :tangle main.yml
+    - name: Install archiso package
+      community.general.pacman:
+        name: archiso
+        state: installed
+#+end_src
+
+*** Setup the working area and profile template
+
+Start by creating the working directory for the custom profile and the eventual directory arch will use to build out the image
+
+#+begin_src yaml :tangle main.yml
+    - name: Create the archiso live working environment
+      ansible.builtin.file:
+        path: "{{ workingdir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy the release archsio profile to the working environment
+      ansible.builtin.copy:
+        src: "{{ ai_profile_path }}/{{ ai_profile }}/"
+        dest: "{{ archlive_dir }}"
+        mode: '0755'
+#+end_src
+
+*** sshd configuration
+
+In order to ssh in as root the following the ssh daemon needs to be configured to prevent root password based logins as well as allow for key based authentication. The following taks will make sure that those configuration lines are in the sshd_config file. If they are not present they will be appended (rather than uncommented).
+
+#+begin_src yaml :tangle main.yml
+    - name: Disable root ssh login via password
+      ansible.builtin.lineinfile:
+        path: "{{ archlive_dir }}/airootfs/etc/ssh/sshd_config"
+        line: "PermitRootLogin prohibit-password"
+
+    - name: Enable Public key authentication
+      ansible.builtin.lineinfile:
+        path: "{{ archlive_dir }}/airootfs/etc/ssh/sshd_config"
+        line: "PubkeyAuthentication yes"
+#+end_src
+
+With that done we need to make sure that the ssh daemon is enabled within the image and will start up automatically on boot. The easiest way to do this is to link the localhosts service into the custom profiles 'multi-user.target.wants' directory within the etc directory just like it is linked on the local machine. This will instruct systemd to fire up the deamon on boot. For some reason the releng profile has a non-symlinked sshd.service already in there which does turn on, so to start we will remove that file and then link it against the localhost ssh service.
+
+#+begin_src yaml :tangle main.yml
+    - name: Remove any existing sshd service
+      ansible.builtin.file:
+        path: "{{ archlive_dir }}/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service"
+        state: absent
+
+    - name: Enable sshd by default
+      ansible.builtin.file:
+        src: "/usr/lib/systemd/system/sshd.service"
+        dest: "{{ archlive_dir }}/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service"
+        state: link
+#+end_src
+
+*** Networking
+
+We can't ssh into a host that doesn't have a network connection so we will want to make sure that it is online and available. I'm assuming for the purposes of this image that the target host will be using a hard wired connection and not wifi. Because of that all we need to do is enable the dhcpd service by once again linking the service from the localhost to the new profile.
+
+#+begin_src yaml :tangle main.yml
+    - name: Enable DHCP by default
+      ansible.builtin.file:
+        src: "/usr/lib/systemd/system/dhcpcd.service"
+        dest: "{{ archlive_dir }}/airootfs/etc/systemd/system/multi-user.target.wants/dhcpcd.service"
+        state: link
+#+end_src
+
+*** Root ssh key based authentication
+
+As mentioned in the prereqs section, before running this playbook you will need to have or generate an ssh public private key pair that the root user will use for authentication. There are a variety key types to choose from but the simplest is to create a no-passphrase rsa key. This is in no ways the most secure way to handle this but in theory using the image is going to be temporary, and only used up until the target system has its new operating system installed. That said don't go sharing the private key being generated here just as a matter of good practice.
+
+#+begin_src sh
+ssh-keygen -f ~/.ssh/archiso-root_rsa
+#+end_src
+
+The custom image will use the public key generated as part of its authorized_keys to authenticate incoming ssh connections. So first we need to make sure that the authorized_keys file is present in the /root/.ssh directory and then append the contents of the pub key to that file.
+
+#+begin_src yaml :tangle main.yml
+    - name: Create the .ssh folder for the root user
+      ansible.builtin.file:
+        path: "{{ archlive_dir }}/airootfs/root/.ssh/"
+        state: directory
+
+    - name: Make sure that the authorized keys file is present in the root .ssh directory
+      ansible.builtin.file:
+        path: "{{ archlive_dir }}/airootfs/root/.ssh/authorized_keys"
+        state: touch
+        mode: '0755'
+
+    - name: Update the authorized keys file in the root .ssh directory
+      ansible.builtin.lineinfile:
+        path: "{{ archlive_dir }}/airootfs/root/.ssh/authorized_keys"
+        line: "{{ lookup('file', ssh_pub_key ) }}"
+#+end_src
+
+*** Building the image
+
+And now its finally time to build the new image. Part of the archiso package includes the mkarchiso command that conveniently builds an image when passed a profile, a working directory and output directory. This can take a lot of time so after running the playbook go grab yourself a cup of coffee or favorite beverage of choice. On my machine it takes roughly 8 minutes. Your mileage may vary.
+
+#+begin_src yaml :tangle main.yml
+    - name: Build the arch image
+      ansible.builtin.shell:
+        cmd: "mkarchiso -v -w {{ workingdir }}/work -o {{ workingdir }} {{ archlive_dir }}"
+#+end_src
+
+*** Clean up time
+
+The build process as well as the custom profile takes up quite a bit of space so it makes sense to clean up these files and folders afterwards. Fortunately everything lives in our working directory so the process is fairly simple.
+
+#+begin_src yaml :tangle main.yml
+    - name: Clean up the work dir that was created to build the image
+      ansible.builtin.file:
+        path: "{{ workingdir }}"
+        state: absent
+#+end_src
+
+* Running the playbook
+The playbook is defined so time to run it. We will be running this as sudo so make sure to ask for the sudo password.
+
+#+begin_src sh
+ansible-playbook main.yml --ask-become-pass
+#+end_src
+
+* Testing the image
+Assuming the image was created you should be able to find it in /var/tmp/ or wherever you customized the img_dir variable. The archiso package includes the command run_archiso which takes the new image as a parameter.
+
+#+begin_src sh
+run_archiso -i /path/to/image
+#+end_src
+
+This will spin up the image in a vm using qemu. After it boots up you can verify that services were started as normal as well as any files or scripts that were part of the image are available/were run.
+
+A quick inspection of the actual command being run shows that the ssh port on the vm is being forwarded to port 60022 which provides a way to test our key based authentication.
+
+#+begin_src text
+qemu-system-x86_64 -boot order=d,menu=on,reboot-timeout=5000 -m size=3072,slots=0,maxmem=3221225472 -k en-us -name archiso,process=archiso_0 -device virtio-scsi-pci,id=scsi0 -device scsi-cd,bus=scsi0.0,drive=cdrom0 -drive id=cdrom0,if=none,format=raw,media=cdrom,read-only=on,file=/tmp/archiso-custom/archlinux-2023.08.12-x86_64.iso -display sdl -vga virtio -audiodev pa,id=snd0 -device ich9-intel-hda -device hda-output,audiodev=snd0 -device virtio-net-pci,romfile=,netdev=net0 -netdev user,id=net0,hostfwd=tcp::60022-:22 -machine type=q35,smm=on,accel=kvm,usb=on,pcspk-audiodev=snd0 -global ICH9-LPC.disable_s3=1 -enable-kvm -serial stdio -no-reboot
+#+end_src
+
+Make sure that the proper ssh_config is setup on the machine you are connecting from.
+
+#+begin_src text file:ssh_config
+Host localhost
+     Hostname localhost
+     User root
+     IdentityFile /home/thartman/.ssh/archiso-root_rsa
+     IdentitiesOnly yes
+#+end_src
+
+and finally test the ssh connection:
+
+#+begin_src sh
+ssh root@localhost -p 60022
+#+end_src
+
+* Burning the image
+
+Use dd to burn the image to a thumbdrive or other bootable media and use as you would an install image found on the arch website.
+
+#+begin_src sh
+sudo dd if=/path/to/image of=/dev/path/to/thumbdrive bs=4096
+#+end_src
