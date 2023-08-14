@@ -1,0 +1,98 @@
+#+TITLE: Creating a virtual pi cluster
+#+AUTHOR: Tom Hartman
+* General
+
+This is a ansible playbook to spin up a set of Virtual Machines on a host emulating raspberry pi's using qemu.
+** Goals
+
+The purpose of this is to be able to spin up clean raspberry pi hosts for testing purposes. My ultimate aim is to be able to spin up hosts for testing other ansible playbooks on raspberry pi's before deploying them to actual metal as well as provide a general testbed for working with custom images for the raspberry pi hardware.
+
+** Prerequisites
+
+There is very little in the way of prerequisites other than a linux host that can do hardware emulation. As of this writing I'm running this on an old NUC that I was using as a media server so I'm not expecting it to win any races in terms of speed but should be good enough for development and testing purposes even if it runs a bit slow.
+
+** Assumptions and Names
+
+There will be one or two tasks that are Arch Linux specific, but those are solely for verifying and installing if necessary the appropriate qemu packages. I will not those in the tasks section when applicable. They should be changed to reflect the hosts distribution package manager as needed.
+
+I will primarily be calling the target host where the virtual machines are create the `VM host' and the virtual machines within it sa `VMs' however all of them do need actual host names as well. Within this document the VM host will be named anemoi and the VMs will be boreas, zephyrus, notus, and eurus after the four winds of Greek mythology. These will only be referenced in any file that actual requires using their actual host name and otherwise will be referred to in a more generic sense.
+
+** Limitations
+
+At the time of this writing Qemu can only emulate raspberry pi 3B hardware with no support yet for Pi4s or the newer Computer Modules. That said if it will run on a pi3 hardware (even if not a great idea) it should run on the newer models just a bit slower. Also we can change the amount of available memory to reflect newer hardware even while emulating the older pi 3B chipset.
+
+** Results
+
+When run this should automatically setup the follow on the target host/hosts
+
+1. Verify that the appropriate qemu packages are installed and install them if not present
+2. Create X number of raspberry pi hosts
+3. Forward the ssh ports for each of the VMs to ports on the remote host in a logical and automatic way
+
+
+* Hosts file
+
+As with most playbooks we will define a hosts.ini file to indicate where we are running the playbook against. This consists of a single hosts group `vm-hosts' with the name of the host.
+
+#+begin_src conf :tangle inventory/hosts.ini
+[vm-hosts]
+anemoi
+
+#+end_src
+
+Additionally we will define a `vms' group with the names of the VMs to be created within the host
+
+#+begin_src conf :tangle inventory/hosts.ini
+[vms]
+boreas
+zephyrus
+notus
+eurus
+#+end_src
+
+* Playbook Definition
+We begin with a general playbook definition and setup, providing the name, the hosts to run against as well as indicating that this playbook will be run as the root user `become: true'.
+
+#+begin_src yaml :tangle main.yml
+---
+- name: Create and start raspberry pi vms on host
+  hosts: vm-hosts
+  become: true
+
+  tasks:
+#+end_src
+
+* Tasks
+
+** Verify virtualization support on the target
+
+The first task we will run is to verify that the host machine is capable of running virtual machines before beginning the process of verifying the appropriate qemu packages are installed. Specifically we will be look at the CPU specs to verify that it contains property Virtualization with either a value of VT-x for Intel chipsets or AMD-V for AMD. Were we to look at this by hand we would run:
+
+#+begin_src sh
+LC_ALL=C lscpu | grep Virtualization
+#+end_src
+
+And verify the output. The equivalent ansible task is as follows.
+
+#+begin_src yaml :tangle main.yml
+    - name: Verify virtualization capabilities of the host
+      ansible.builtin.shell:
+        cmd: |-
+          LC_ALL=C lscpu | grep Virtualization: | sed -e 's/^.*Virtualization:\s*\(.*\)\s*$/\1/'
+      register: ret
+      failed_when: ret.stdout != 'VT-x' and ret.stdout != 'AMD-V'
+#+end_src
+
+
+** Verify that the qemu packages
+
+We will be running the Virtual Machines using the Qemu virtualizer. We will need to validate that the packages are install specifically the qemu-system-aarch64 package which will allow for ARM emulation that the Raspberry pi's require. This should be the only linux distribution specific task within this playbook.
+
+#+begin_src yaml :tangle main.yml
+    - name: Verify that qemu-system-aarch64 package is present
+      ansible.builtin.pacman:
+        name: qemu-system-aarch64
+        state: present
+#+end_src
+
+**
