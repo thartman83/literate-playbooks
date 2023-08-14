@@ -3,8 +3,17 @@
   hosts: vm-hosts
   become: true
 
-  tasks:
+  vars:
+    working_dir: "/tmp/virtpi"
 
+    raspios_release: "2023-05-03"
+    raspios_baseurl: "https://downloads.raspberrypi.org"
+    raspios_arch: "raspios_lite_armhf"
+    raspios_imagename: "raspios-bullseye-armhf-lite"
+    raspios_imageurl: "{{ raspios_baseurl }}/{{ raspios_arch }}/images/{{ raspios_arch }}-{{ raspios_release }}/{{ raspios_release }}-{{ raspios_imagename }}.img.xz"
+    raspios_checksumurl: "{{ raspios_baseurl }}/{{ raspios_arch }}/images/{{ raspios_arch }}-{{ raspios_release }}/{{ raspios_release }}-{{ raspios_imagename }}.img.xz.sha256"
+
+  tasks:
     - name: Verify virtualization capabilities of the host
       ansible.builtin.shell:
         cmd: |-
@@ -16,3 +25,29 @@
       ansible.builtin.pacman:
         name: qemu-system-aarch64
         state: present
+
+    - name: Verify that xz archive utilities are available
+      ansible.builtin.pacman:
+        name:
+          - xz
+          - p7zip
+        state: present
+
+    - name: Create temporary working directory
+      ansible.builtin.file:
+        path: "{{ working_dir }}"
+        state: directory
+
+    - name: Extract files from raspbian image
+      community.general.iso_extract:
+        image: "{{ working_dir }}/{{ raspios_release }}-{{ raspios_imagename }}.img"
+        dest: "{{ working_dir }}"
+        files:
+          - 0.fat
+
+    - name: Extract files from raspbian image
+      community.general.iso_extract:
+        image: "{{ working_dir }}/0.fat"
+        dest: "{{ working_dir }}"
+        files:
+          - kernel8.img

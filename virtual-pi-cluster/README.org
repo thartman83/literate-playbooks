@@ -3,25 +3,28 @@
 * General
 
 This is a ansible playbook to spin up a set of Virtual Machines on a host emulating raspberry pi's using qemu.
+
 ** Goals
 
-The purpose of this is to be able to spin up clean raspberry pi hosts for testing purposes. My ultimate aim is to be able to spin up hosts for testing other ansible playbooks on raspberry pi's before deploying them to actual metal as well as provide a general testbed for working with custom images for the raspberry pi hardware.
+The purpose of this is to be able to automatically create and startup clean raspberry pi hosts for testing purposes. My ultimate aim is to be able to spin up hosts for testing other ansible playbooks on raspberry pi's before deploying them to actual metal as well as provide a general testbed for working with custom images for the raspberry pi hardware.
 
 ** Prerequisites
 
-There is very little in the way of prerequisites other than a linux host that can do hardware emulation. As of this writing I'm running this on an old NUC that I was using as a media server so I'm not expecting it to win any races in terms of speed but should be good enough for development and testing purposes even if it runs a bit slow.
+There is very little in the way of prerequisites other than a linux host that can do hardware emulation and virtualization. As of this writing I'm running this on an old NUC that I was being used as a media server so I'm not expecting it to win any races in terms of speed but should be good enough for development and testing purposes even if it runs a bit slow.
+
+You will also need to have ansible installed on the machine that you will be running the playbooks and a python interpreter on the host as well to allow ansible to connect and make updates.
 
 ** Assumptions and Names
 
-There will be one or two tasks that are Arch Linux specific, but those are solely for verifying and installing if necessary the appropriate qemu packages. I will not those in the tasks section when applicable. They should be changed to reflect the hosts distribution package manager as needed.
+There will be one or two tasks that are Arch Linux specific, but those are solely for verifying and installing if necessary the appropriate qemu packages. I will note those in the tasks section when applicable. They should be changed to reflect the hosts distribution package manager as needed.
 
 I will primarily be calling the target host where the virtual machines are create the `VM host' and the virtual machines within it sa `VMs' however all of them do need actual host names as well. Within this document the VM host will be named anemoi and the VMs will be boreas, zephyrus, notus, and eurus after the four winds of Greek mythology. These will only be referenced in any file that actual requires using their actual host name and otherwise will be referred to in a more generic sense.
 
 ** Limitations
 
-At the time of this writing Qemu can only emulate raspberry pi 3B hardware with no support yet for Pi4s or the newer Computer Modules. That said if it will run on a pi3 hardware (even if not a great idea) it should run on the newer models just a bit slower. Also we can change the amount of available memory to reflect newer hardware even while emulating the older pi 3B chipset.
+At the time of this writing Qemu can only emulate raspberry pi 3B hardware with no support yet for Pi4s or the newer Computer Modules. That said if it will run on a pi3 hardware (even if not a great idea) it should run on the newer models if a bit slower. Also we can change the amount of available memory to reflect newer hardware even while emulating the older pi 3B chipset.
 
-** Results
+** Expected Results
 
 When run this should automatically setup the follow on the target host/hosts
 
@@ -51,6 +54,8 @@ eurus
 #+end_src
 
 * Playbook Definition
+
+** Basic Setup
 We begin with a general playbook definition and setup, providing the name, the hosts to run against as well as indicating that this playbook will be run as the root user `become: true'.
 
 #+begin_src yaml :tangle main.yml
@@ -58,13 +63,41 @@ We begin with a general playbook definition and setup, providing the name, the h
 - name: Create and start raspberry pi vms on host
   hosts: vm-hosts
   become: true
-
-  tasks:
 #+end_src
 
-* Tasks
+** Variables
 
-** Verify virtualization support on the target
+We will be defining the following variables to be used within this playbook:
+
+- workingdir: a temporary storage location on the host that will be used by the playbook to download materials and files in preparation for setting up the virtual machines
+#+begin_src yaml :tangle main.yml
+  vars:
+    working_dir: "/tmp/virtpi"
+#+end_src
+
+We will be downloading a raspian os image from the raspberry pi website as well so we define a number of variables to support that and allow for quick updates to the url should that path change or we want to change which image we pull.
+
+- raspiso_release: the release date of the stock raspios image. This will be used to determine which image to be download and run, Update this value based on the current version as necessary.
+- raspios_baseurl: the base url of the raspberry pi download mirror
+- raspiso_arch: the architecture of the raspberry pi image. In this case because we will be emulating the raspberry pi 3b we will want to use armhf instead of arm64 which is what the 3b supports
+- raspiso_imagename: the name of the image on the raspberry pi mirror
+- raspiso_imageurl: the final full url of where to find the image we will be using
+- raspiso_checksumurl: the final full url of the checksum to use to validate the image
+
+#+begin_src yaml :tangle main.yml
+    raspios_release: "2023-05-03"
+    raspios_baseurl: "https://downloads.raspberrypi.org"
+    raspios_arch: "raspios_lite_armhf"
+    raspios_imagename: "raspios-bullseye-armhf-lite"
+    raspios_imageurl: "{{ raspios_baseurl }}/{{ raspios_arch }}/images/{{ raspios_arch }}-{{ raspios_release }}/{{ raspios_release }}-{{ raspios_imagename }}.img.xz"
+    raspios_checksumurl: "{{ raspios_baseurl }}/{{ raspios_arch }}/images/{{ raspios_arch }}-{{ raspios_release }}/{{ raspios_release }}-{{ raspios_imagename }}.img.xz.sha256"
+#+end_src
+
+
+
+** Tasks
+
+*** Verify virtualization support on the target
 
 The first task we will run is to verify that the host machine is capable of running virtual machines before beginning the process of verifying the appropriate qemu packages are installed. Specifically we will be look at the CPU specs to verify that it contains property Virtualization with either a value of VT-x for Intel chipsets or AMD-V for AMD. Were we to look at this by hand we would run:
 
@@ -75,6 +108,7 @@ LC_ALL=C lscpu | grep Virtualization
 And verify the output. The equivalent ansible task is as follows.
 
 #+begin_src yaml :tangle main.yml
+  tasks:
     - name: Verify virtualization capabilities of the host
       ansible.builtin.shell:
         cmd: |-
@@ -83,8 +117,9 @@ And verify the output. The equivalent ansible task is as follows.
       failed_when: ret.stdout != 'VT-x' and ret.stdout != 'AMD-V'
 #+end_src
 
+If the target host does not support virtualization we want to bail early before doing any package installation or qemu setup.
 
-** Verify that the qemu packages
+*** Verify that the qemu packages exist
 
 We will be running the Virtual Machines using the Qemu virtualizer. We will need to validate that the packages are install specifically the qemu-system-aarch64 package which will allow for ARM emulation that the Raspberry pi's require. This should be the only linux distribution specific task within this playbook.
 
@@ -95,4 +130,108 @@ We will be running the Virtual Machines using the Qemu virtualizer. We will need
         state: present
 #+end_src
 
-**
+We also need to make sure that the proper decompression utilities are install on the target machine so we can unarchive download images files. In this case we specifically want xz archive format to be able to unarchive the compressed image found on the raspberry pi's website as well as use the 7zip utility to extract specific files from iso image.
+
+#+begin_src yaml :tangle main.yml
+    - name: Verify that xz archive utilities are available
+      ansible.builtin.pacman:
+        name:
+          - xz
+          - p7zip
+        state: present
+#+end_src
+
+*** Setup the working directory
+
+Create the temporary working directory on the host. This will be cleaned up after work in this directory is complete
+
+#+begin_src yaml :tangle main.yml
+    - name: Create temporary working directory
+      ansible.builtin.file:
+        path: "{{ working_dir }}"
+        state: directory
+#+end_src
+
+*** Downloading and extracting the pi kernel and dtb file
+
+Before creating the vm images we will need both a raspberry pi kernel as well as the associated 'device tree blob' or dtb file that represents the physical hardware of the raspberry pi. These are available in various github repositories but we can also get these straight from the horses mouth as it were by extracting them from the stock raspbian disk images found on the raspberry pi website.
+
+We first begin by downloading the md5 checksum into a variable so we can verify the disk image.
+
+#+begin_src yaml
+    - name: Download the raspberry pi disk image to the working directory
+      ansible.builtin.get_url:
+        url: "{{ raspios_imageurl }}"
+        dest: "{{ working_dir }}"
+        checksum: "sha256:{{ raspios_checksumurl }}"
+        force: false
+#+end_src
+
+With the download complete and verified we need to decompress the image before we can work with it. The builtin in unarchive command only handles tar and zip files and our file currently is xz so we will need to use the generic shell builtin instead.
+
+#+begin_src yaml
+    - name: Extract the image from the compressed file
+      ansible.builtin.shell:
+        cmd: "unxz {{ working_dir }}/{{ raspios_release }}-{{ raspios_imagename }}.img.xz"
+#+end_src
+
+If we inspect the image using fdisk we can see that the image contains two partitions. The first is the boot fat32 partition that contains information on how to boot the image while the second partition contains the actual operating system.
+
+#+begin_src sh
+fdisk -l /tmp/virtpi/2023-05-03-raspios-bullseye-armhf-lite.img
+#+end_src
+
+#+begin_src text
+Disk /tmp/virtpi/2023-05-03-raspios-bullseye-armhf-lite.img: 1.83 GiB, 1967128576 bytes, 3842048 sectors
+Units: sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 512 bytes
+I/O size (minimum/optimal): 512 bytes / 512 bytes
+Disklabel type: dos
+Disk identifier: 0x4c4e106f
+
+Device                                                  Boot  Start     End Sectors  Size Id Type
+/tmp/virtpi/2023-05-03-raspios-bullseye-armhf-lite.img1        8192  532479  524288  256M  c W95 FAT32 (LBA)
+/tmp/virtpi/2023-05-03-raspios-bullseye-armhf-lite.img2      532480 3842047 3309568  1.6G 83 Linux
+#+end_src
+
+If we use 7z to list contents the image we see that these two partitions are themselves also disk images:
+#+begin_src sh
+7z l /tmp/virtpi/2023-05-03-raspios-bullseye-armhf-lite.img
+#+end_src
+
+#+begin_src text
+Listing archive: /tmp/virtpi/2023-05-03-raspios-bullseye-armhf-lite.img
+
+--
+Path = /tmp/virtpi/2023-05-03-raspios-bullseye-armhf-lite.img
+Type = MBR
+Physical Size = 1967128576
+
+   Date      Time    Attr         Size   Compressed  Name
+------------------- ----- ------------ ------------  ------------------------
+                    .....    268435456    268435456  0.fat
+                    .....   1694498816   1694498816  1.img
+------------------- ----- ------------ ------------  ------------------------
+                            1962934272   1962934272  2 files
+#+end_src
+
+We will need to extract the 0.fat image first in order eventually extract the files we will need to properly emulate the raspberry pi hardware. This can be handled using two separate tasks as seen below using the community iso_extract module.
+
+#+begin_src yaml :tangle main.yml
+    - name: Extract files from raspbian image
+      community.general.iso_extract:
+        image: "{{ working_dir }}/{{ raspios_release }}-{{ raspios_imagename }}.img"
+        dest: "{{ working_dir }}"
+        files:
+          - 0.fat
+#+end_src
+
+#+begin_src yaml :tangle main.yml
+    - name: Extract files from raspbian image
+      community.general.iso_extract:
+        image: "{{ working_dir }}/0.fat"
+        dest: "{{ working_dir }}"
+        files:
+          - bcm2710-rpi-3-b.dtb
+          - kernel8.img
+#+end_src
