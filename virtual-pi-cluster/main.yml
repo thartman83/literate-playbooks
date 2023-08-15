@@ -13,6 +13,8 @@
     raspios_imageurl: "{{ raspios_baseurl }}/{{ raspios_arch }}/images/{{ raspios_arch }}-{{ raspios_release }}/{{ raspios_release }}-{{ raspios_imagename }}.img.xz"
     raspios_checksumurl: "{{ raspios_baseurl }}/{{ raspios_arch }}/images/{{ raspios_arch }}-{{ raspios_release }}/{{ raspios_release }}-{{ raspios_imagename }}.img.xz.sha256"
 
+    sd_card_dir: "/var/tmp/sdcards"
+
   tasks:
     - name: Verify virtualization capabilities of the host
       ansible.builtin.shell:
@@ -21,9 +23,12 @@
       register: ret
       failed_when: ret.stdout != 'VT-x' and ret.stdout != 'AMD-V'
 
-    - name: Verify that qemu-system-aarch64 package is present
+    - name: Verify that qemu packages are present
       ansible.builtin.pacman:
-        name: qemu-system-aarch64
+        name:
+          - qemu-system-aarch64
+          - qemu-img
+          - libvirt
         state: present
 
     - name: Verify that xz archive utilities are available
@@ -32,6 +37,11 @@
           - xz
           - p7zip
         state: present
+
+    - name: Ensure that the libvirtd service started
+      ansible.builtin.systemd:
+        name: libvirtd
+        state: started
 
     - name: Create temporary working directory
       ansible.builtin.file:
@@ -50,4 +60,33 @@
         image: "{{ working_dir }}/0.fat"
         dest: "{{ working_dir }}"
         files:
+          - bcm2710-rpi-3-b.dtb
           - kernel8.img
+
+    - name: Verify that the host has location for our sd cards
+      ansible.builtin.file:
+        path: "{{ sd_card_dir }}"
+        state: directory
+
+    - name: Copy the downloaded disk image to the sd card work area
+      ansible.builtin.copy:
+        src: "{{ working_dir }}/{{ raspios_release }}-{{ raspios_imagename }}.img"
+        dest: "{{ sd_card_dir }}/boreas-{{ raspios_imagename }}.img"
+        remote_src: true
+
+    - name: Expand the image using qemu-img
+      ansible.builtin.shell:
+        cmd: |-
+          qemu-img resize -f raw "{{ sd_card_dir }}/boreas-{{ raspios_imagename  }}.img" 4G
+
+    - name: Spin up the VM
+      ansible.builtin.shell:
+        cmd: |-
+          qemu-system-aarch64 -machine raspi3b -cpu cortex-a53 -smp 4 -m 1G \
+          -kernel "{{ working_dir }}"/kernel8.img \
+          -dtb "{{ working_dir }}"/bcm2710-rpi-3-b.dtb \
+          -sd "{{ sd_card_dir }}/boreas-{{ raspios_imagename  }}.img" \
+          -append "root=/dev/mmcblk0p2 rw rootwait rootfstype=ext4" \
+          -usbdevice keyboard -device usb-net,netdev=net0 \
+          -netdev user,id=net0,hostfwd=tcp::2022-:22,hostname=boreas \
+          -display none -daemonize -pidfile "{{ sd_card_dir }}/pidfile.txt"

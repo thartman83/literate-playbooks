@@ -93,6 +93,11 @@ We will be downloading a raspian os image from the raspberry pi website as well 
     raspios_checksumurl: "{{ raspios_baseurl }}/{{ raspios_arch }}/images/{{ raspios_arch }}-{{ raspios_release }}/{{ raspios_release }}-{{ raspios_imagename }}.img.xz.sha256"
 #+end_src
 
+The raspbian image that is download will eventually double as the sd card image for the VM when started so we will want to store those in a separate location on the VM host. Define some variables to support that as well
+
+#+begin_src yaml :tangle main.yml
+    sd_card_dir: "/var/tmp/sdcards"
+#+end_src
 
 
 ** Tasks
@@ -121,12 +126,17 @@ If the target host does not support virtualization we want to bail early before 
 
 *** Verify that the qemu packages exist
 
-We will be running the Virtual Machines using the Qemu virtualizer. We will need to validate that the packages are install specifically the qemu-system-aarch64 package which will allow for ARM emulation that the Raspberry pi's require. This should be the only linux distribution specific task within this playbook.
+We will be running the Virtual Machines using the Qemu virtualizer. We will need to validate that the packages are install specifically the qemu-system-aarch64 package which will allow for ARM emulation that the Raspberry pi's require. We will also need qemu-img installed on the host to prepare the disk images.
+
+This should be the only linux distribution specific task within this playbook.
 
 #+begin_src yaml :tangle main.yml
-    - name: Verify that qemu-system-aarch64 package is present
+    - name: Verify that qemu packages are present
       ansible.builtin.pacman:
-        name: qemu-system-aarch64
+        name:
+          - qemu-system-aarch64
+          - qemu-img
+          - libvirt
         state: present
 #+end_src
 
@@ -139,6 +149,17 @@ We also need to make sure that the proper decompression utilities are install on
           - xz
           - p7zip
         state: present
+#+end_src
+
+*** Verify that the libvirtd service is started
+
+We will be using the virsh command to interact with the vms once created so we need to ensure that the libvirtd service is enabled on the target system.
+
+#+begin_src yaml :tangle main.yml
+    - name: Ensure that the libvirtd service started
+      ansible.builtin.systemd:
+        name: libvirtd
+        state: started
 #+end_src
 
 *** Setup the working directory
@@ -234,4 +255,44 @@ We will need to extract the 0.fat image first in order eventually extract the fi
         files:
           - bcm2710-rpi-3-b.dtb
           - kernel8.img
+#+end_src
+
+*** Buidling out the VM images
+
+Start by making sure that the sd_card directory is available on the host.
+
+#+begin_src yaml :tangle main.yml
+    - name: Verify that the host has location for our sd cards
+      ansible.builtin.file:
+        path: "{{ sd_card_dir }}"
+        state: directory
+#+end_src
+
+#+begin_src yaml :tangle main.yml
+    - name: Copy the downloaded disk image to the sd card work area
+      ansible.builtin.copy:
+        src: "{{ working_dir }}/{{ raspios_release }}-{{ raspios_imagename }}.img"
+        dest: "{{ sd_card_dir }}/boreas-{{ raspios_imagename }}.img"
+        remote_src: true
+#+end_src
+
+#+begin_src yaml :tangle main.yml
+    - name: Expand the image using qemu-img
+      ansible.builtin.shell:
+        cmd: |-
+          qemu-img resize -f raw "{{ sd_card_dir }}/boreas-{{ raspios_imagename  }}.img" 4G
+#+end_src
+
+#+begin_src yaml :tangle main.yml
+    - name: Spin up the VM
+      ansible.builtin.shell:
+        cmd: |-
+          qemu-system-aarch64 -machine raspi3b -cpu cortex-a53 -smp 4 -m 1G \
+          -kernel "{{ working_dir }}"/kernel8.img \
+          -dtb "{{ working_dir }}"/bcm2710-rpi-3-b.dtb \
+          -sd "{{ sd_card_dir }}/boreas-{{ raspios_imagename  }}.img" \
+          -append "root=/dev/mmcblk0p2 rw rootwait rootfstype=ext4" \
+          -usbdevice keyboard -device usb-net,netdev=net0 \
+          -netdev user,id=net0,hostfwd=tcp::2022-:22,hostname=boreas \
+          -display none -daemonize -pidfile "{{ sd_card_dir }}/pidfile.txt"
 #+end_src
