@@ -1,0 +1,60 @@
+#+TITLE: Provision Cluster
+#+AUTHOR: Tom Hartman
+* General
+
+The purpose of this playbook is to spin up a set of bare virtual machines capable of being used in a kubernetes cluster on a vm host. These vms will be minimally configured to allow for ssh login and have a python instance install to allow for future ansible blaybooks to be run. The goal is to be able to spin up blank virtual machines that can be used for setting up small clusters for testing and development purposes. As a result, I do not consider these virtual machines to be permanent or anything other than ephemeral for non-production usage.
+
+** Requirements and Prerequisties
+
+** Usage
+
+This playbook accepts the follow role arguments to determine how the playbook will be run:
+
+- provision
+Create and start the set of virtual machines on the target vm host
+
+- precheck
+Verify that the targte vm host has the capabilities to start virtual machines and has adequate resources for the set of virtual machines based on the resource needed and the amount free on the target
+
+- unprovision
+  Stop and destroy the set of virtual machines on the target vm host.
+
+  #+begin_src sh
+ansible-playbook -i inventory/hosts main.yml --extra-args [role]
+  #+end_src
+
+* Playbook Definition
+
+** Inventory
+
+The playbook expects the following host groups be defined
+
+- vmhost
+  The host (or hosts) machine where the virtual machines will be created and started.
+- vms
+  A list of virtual machines to be created on the target machine.
+
+  The number of vmhosts and VMs is entirely arbitrary though at least one will need to be defined for each. For the rest of this documentation the assumption will be that there is a single VM host named anemoi and 4 vms to be managed: boreas, zephyrus, notus, and eurus. These are defined in inventory/hosts.ini as below:
+
+#+begin_src yaml :tangle hosts/inventory.ini
+[vmhost]
+anemoi
+
+[vms]
+boreas
+zephyrus
+notus
+eurus
+#+end_src
+
+** Tasks
+
+These are the set of tasks that will be run as part of this playbook.
+
+*** Virtualization Verification
+
+Verify that the remote host is capable of virtualziation.
+
+*** Verify virtualization package installation
+
+*** 
