@@ -1,0 +1,4 @@
+- name: Download the base VM image
+  get_url:
+    url: "{{ vm_download_url }}"
+    dest: "{{ vm_working_dir }}"

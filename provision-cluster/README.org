@@ -56,27 +56,76 @@ notus
 eurus
 #+end_src
 
-* Playbook Definition
+* Host Variables
+
+Setup the variables for each host in their own respective file. These files need to be the same name as the name of the host in the hosts file if using dns. If it is being referenced by IP address the below yaml file should be name the IP address, eg: 172.17.1.123.yml
+
+For the VM host we will define the package names based on the host operating system. The package names below are for arch so adjust accordingly if they are not the same for the target operating system
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+---
+qemu_package: qemu
+dhclient_package: dhclient
+openbsd_netcat_package: openbsd-netcat
+dnsmasq_package: dnsmasq
+virt_install_package: virt-install
+bridge_utils_package: bridge-utils
+qemu_img_package: qemu-img
+libvirt_package: libvirt
+#+end_src
+
+Additionally we will want to define the name of the services in case they are different across distributions
+#+begin_src yaml :tangle host_vars/anemoi.yml
+libvirtd_service: libvirtd
+#+end_src
+
+Directories:
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vm_working_dir: /tmp/vm_imgs/
+
+#+end_src
+
+For the VMs we will be using the cloud buster debian vm image as a base. It will be configured on a per VM basis with other configurations throughout the playbook process.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vm_img_baseurl: https://cloud.debian.org/images/cloud/buster/
+vm_img_release_date: 20230802-1460
+vm_img_name: "debian-10-generic-arm64-{{ vm_img_release_date }}.qcow2"
+vm_download_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_name }}"
+#+end_src
+
+For the VMs themselves we will create identical machines provisioned with the same amount of disk space and memory. By default this playbook will provision each with 20G of disk space, 2G of memory, a default user of `anemoi` using the ssh public key ~/.ssh/anemoi_rsa as an authorized key.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vm_diskspace: 20G
+vm_memory: 2G
+user: anemoi
+ssh_pub_key: ~/.ssh/anemoi_rsa
+#+end_src
+
+* Playbook Definitions
 
 The playbook is invoked by called the main.yml file within this directory.
 
 ** Main
+
 The main.yml file is the entry point for this playbook and will be used in combination with the action parameter to determine which roles will be run against the host.
 
-*** General Setup
 We begin with a general playbook definition and setup, providing the name, the hosts to run against as well as indicating that this playbook will be run as the root user `become: true’.
 
 #+begin_src yaml :tangle main.yml
 ---
-- name: Create and start raspberry pi vms on host
+- name: Provision virtual machines
   hosts: vmhost
   become: true
-#+end_src
-
-*** Variables
-
-*** Tasks
-
+  roles:
+    - role: virtualization-checks
+    - role: virtualization-packages
+    - role: virtualization-services
+    - role: prepare-vm-dirs
+    - role: download-vm-image
+  #+end_src
 
 ** Roles
 
@@ -101,11 +150,69 @@ We set LC_ALL=C to turn off any internationalization locales on the target syste
 ---
 
 - name: Verify virtualization capabilities of the host
-  ansible.builtin.shell:
-  cmd: |-
-    LC_ALL=C lscpu | grep Virtualization: | sed -e 's/^.*Virtualization:\s*\(.*\)\s*$/\1/'
+  shell:
+    cmd: |-
+      LC_ALL=C lscpu | grep Virtualization: | sed -e 's/^.*Virtualization:\s*\(.*\)\s*$/\1/'
   register: ret
   failed_when: ret.stdout != 'VT-x' and ret.stdout != 'AMD-V'
 #+end_src
 
-*** Qemu and libvirt packages
+*** Virtualization Packages
+
+We will need the following packages to be installed on the VM host in order to setup the various VMs. We will use the generic package task action and rely on the host_vars defined in [[*Host Variables][Host Variables]]. If the name of the values in different package names for you OS please update before running this task.
+
+#+begin_src yaml :tangle roles/virtualization-packages/tasks/main.yml
+---
+
+- name: Verify installation of virtualization packages
+  package:
+    name:
+      - "{{ qemu_package }}"
+      - "{{ dhclient_package }}"
+      - "{{ openbsd_netcat_package }}"
+      - "{{ dnsmasq_package }}"
+      - "{{ virt_install_package }}"
+      - "{{ bridge_utils_package }}"
+      - "{{ qemu_img_package }}"
+      - "{{ libvirt_package }}"
+    state: present
+
+#+end_src
+
+*** Virtualization Services
+
+We will also need to make sure that the libvirtd service has been started. Again we will be using the generic service package.
+
+#+begin_src yaml :tangle roles/virtualization-services/tasks/main.yml
+---
+
+- name: Start the libvirtd service
+  service:
+    name: "{{ libvirtd_service }}"
+    state: started
+    enabled: true
+#+end_src
+
+***
+
+*** Prepare VM Image Directories
+
+#+begin_src yaml :tangle roles/prepare-vm-dirs/tasks/main.yml
+---
+
+- name: Prepare Temp Directory for VM image creation
+  file:
+    path: "{{ vm_working_dir }}"
+    state: directory
+
+#+end_src
+
+*** Download the base VM image
+
+#+begin_src yaml :tangle roles/download-vm-image/tasks/main.yml
+- name: Download the base VM image
+  get_url:
+    url: "{{ vm_download_url }}"
+    dest: "{{ vm_working_dir }}"
+
+#+end_src

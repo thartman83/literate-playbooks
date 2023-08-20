@@ -1,0 +1,7 @@
+---
+
+- name: Start the libvirtd service
+  service:
+    name: "{{ libvirtd_service }}"
+    state: started
+    enabled: true

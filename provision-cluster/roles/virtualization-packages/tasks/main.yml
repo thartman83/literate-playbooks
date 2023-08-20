@@ -1,0 +1,14 @@
+---
+
+- name: Verify installation of virtualization packages
+  package:
+    name:
+      - "{{ qemu_package }}"
+      - "{{ dhclient_package }}"
+      - "{{ openbsd_netcat_package }}"
+      - "{{ dnsmasq_package }}"
+      - "{{ virt_install_package }}"
+      - "{{ bridge_utils_package }}"
+      - "{{ qemu_img_package }}"
+      - "{{ libvirt_package }}"
+    state: present

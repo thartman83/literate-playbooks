@@ -1,0 +1,6 @@
+---
+
+- name: Prepare Temp Directory for VM image creation
+  file:
+    path: "{{ vm_working_dir }}"
+    state: directory
