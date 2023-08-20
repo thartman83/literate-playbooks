@@ -1,31 +1,40 @@
-#+TITLE: Provision Cluster
+#+TITLE: Provision a VM Cluster
 #+AUTHOR: Tom Hartman
 * General
 
-The purpose of this playbook is to spin up a set of bare virtual machines capable of being used in a kubernetes cluster on a vm host. These vms will be minimally configured to allow for ssh login and have a python instance install to allow for future ansible blaybooks to be run. The goal is to be able to spin up blank virtual machines that can be used for setting up small clusters for testing and development purposes. As a result, I do not consider these virtual machines to be permanent or anything other than ephemeral for non-production usage.
+The purpose of this playbook is to spin up and down a set of bare virtual machines capable of being used in a kubernetes cluster on a vm host. These vms will be minimally configured to allow for ssh login and have a python instance install to allow for future ansible blaybooks to be run. The goal is to be able to spin up blank virtual machines that can be used for setting up small clusters for testing and development purposes. As a result, I do not consider these virtual machines to be permanent or anything other than ephemeral for non-production usage.
 
-** Requirements and Prerequisties
+** Requirements and Prerequisites
+There is very little in the way of prerequisites other than a linux host that can do hardware emulation and virtualization. As of this writing I’m running this on an old NUC that I was being used as a media server so I’m not expecting it to win any races in terms of speed but should be good enough for development and testing purposes even if it runs a bit slow.
+
+** Assumptions
+There will be one or two tasks that are Arch Linux specific, but those are solely for verifying and installing if necessary the appropriate qemu packages. I will note those in the tasks section when applicable. They should be changed to reflect the hosts distribution package manager as needed.
+
+** Risks
+This playbook obviously will also be spinning up new virtual machines which could cause issues in terms of consuming resources on the host machine. Additionally, this playbook has the capability of unprovisioning virtual machines. This will destroy the virtual machine as well as any virtual disk associated with the vm. Both options will have options to `check` the target environment both that it will be able to complete the action based on the resources available as well as report back what will be created/destroyed. It is recommended to run these checks prior to running to confirm that you will get the desired outcome.
+
+** Naming Conventions
+I will primarily be calling the target host where the virtual machines are create the `VM host’ and the virtual machines within it sa `VMs’ however all of them do need actual host names as well. Within this document the VM host will be named anemoi and the VMs will be boreas, zephyrus, notus, and eurus after the four winds of Greek mythology. These will only be referenced in any file that actual requires using their actual host name and otherwise will be referred to in the more generic sense.
 
 ** Usage
 
-This playbook accepts the follow role arguments to determine how the playbook will be run:
+To run this playbook use the following command.
 
-- provision
-Create and start the set of virtual machines on the target vm host
+#+begin_src sh
+ansible-playbook -i inventory/hosts main.yml --extra-args action=[action]
+#+end_src
 
-- precheck
-Verify that the targte vm host has the capabilities to start virtual machines and has adequate resources for the set of virtual machines based on the resource needed and the amount free on the target
+The action key value pair will determine what type of action the playbook will take on the vmhost system. These actions are as follows:
 
-- unprovision
-  Stop and destroy the set of virtual machines on the target vm host.
+- check-provision: Check that the target system is capable of provisioning the virtual machines. It will both perform a check to see that the CPU support virtualization as well as if the host has enough resources to create and run the virtual machines in terms of memory and storage.
 
-  #+begin_src sh
-ansible-playbook -i inventory/hosts main.yml --extra-args [role]
-  #+end_src
+- provision: Create the virtual machines based on the values in the vms group. This will create new images for the virtual machines, do minimal configuration of the images so that they are ansible ready, and finally create the virtual machines using the customized image.
 
-* Playbook Definition
+- check-unprovision:
 
-** Inventory
+- unprovision:
+
+* Inventory
 
 The playbook expects the following host groups be defined
 
@@ -36,7 +45,7 @@ The playbook expects the following host groups be defined
 
   The number of vmhosts and VMs is entirely arbitrary though at least one will need to be defined for each. For the rest of this documentation the assumption will be that there is a single VM host named anemoi and 4 vms to be managed: boreas, zephyrus, notus, and eurus. These are defined in inventory/hosts.ini as below:
 
-#+begin_src yaml :tangle hosts/inventory.ini
+#+begin_src yaml :tangle inventory/hosts.ini
 [vmhost]
 anemoi
 
@@ -47,14 +56,56 @@ notus
 eurus
 #+end_src
 
-** Tasks
+* Playbook Definition
 
-These are the set of tasks that will be run as part of this playbook.
+The playbook is invoked by called the main.yml file within this directory.
 
-*** Virtualization Verification
+** Main
+The main.yml file is the entry point for this playbook and will be used in combination with the action parameter to determine which roles will be run against the host.
 
-Verify that the remote host is capable of virtualziation.
+*** General Setup
+We begin with a general playbook definition and setup, providing the name, the hosts to run against as well as indicating that this playbook will be run as the root user `become: true’.
 
-*** Verify virtualization package installation
+#+begin_src yaml :tangle main.yml
+---
+- name: Create and start raspberry pi vms on host
+  hosts: vmhost
+  become: true
+#+end_src
 
-*** 
+*** Variables
+
+*** Tasks
+
+
+** Roles
+
+*** Virtualization Checks
+
+The `virtualization checks` role will check that the target host(s) is capable of virtualization as a basic sanity check prior to beginning any other tasks or roles within this playbook.
+
+The easiest way to achieve this is to use the `lscpu` utility and check the value of the Virtualization property of the CPU. We are looking for a value of VT-x for Intel chipsets or AMD-V for AMD. Were we to look at this by hand we would run:
+
+#+begin_src sh
+LC_ALL=C lscpu | grep Virtualization
+#+end_src
+
+We should see something like this as a result:
+#+begin_src text
+Virtualization:                  VT-x
+#+end_src
+
+We set LC_ALL=C to turn off any internationalization locales on the target system so that the results will come back in english (as the default) before we pass that to grep. I believe these days the C locale is really just POSIX but out of habit I still use C. The task to perform the check is as follows.
+
+#+begin_src yaml :tangle roles/virtualization-checks/tasks/main.yml
+---
+
+- name: Verify virtualization capabilities of the host
+  ansible.builtin.shell:
+  cmd: |-
+    LC_ALL=C lscpu | grep Virtualization: | sed -e 's/^.*Virtualization:\s*\(.*\)\s*$/\1/'
+  register: ret
+  failed_when: ret.stdout != 'VT-x' and ret.stdout != 'AMD-V'
+#+end_src
+
+*** Qemu and libvirt packages

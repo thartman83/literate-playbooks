@@ -1,0 +1,4 @@
+---
+- name: Create and start raspberry pi vms on host
+  hosts: vmhost
+  become: true
