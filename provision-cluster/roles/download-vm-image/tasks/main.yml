@@ -1,4 +1,20 @@
+---
+
+- name: Download checksum file
+  get_url:
+    url: "{{ vm_img_checksum_url }}"
+    dest: "{{ vm_working_dir }}"
+
+- name: Extract sha256 checksum for the image we will be downloading
+  slurp:
+    src: "{{ vm_working_dir }}/{{vm_img_checksum_name }}"
+  register: checksums
+
 - name: Download the base VM image
   get_url:
     url: "{{ vm_download_url }}"
-    dest: "{{ vm_working_dir }}"
+    dest: "{{ vm_working_dir }}/{{ vm_img_name }}"
+    checksum: "sha512:{{ checksums.content | b64decode | regex_search(sha_regex, '\\1') }}"
+  vars:
+    sha_regex: "(.+)  {{ vm_img_name | string }}"
+  register: copy_results

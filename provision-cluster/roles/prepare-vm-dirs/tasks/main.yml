@@ -1,6 +1,48 @@
 ---
 
-- name: Prepare Temp Directory for VM image creation
+- name: Create the cluster volume pool directory
   file:
-    path: "{{ vm_working_dir }}"
+    path: "{{ vm_pool_dir }}"
     state: directory
+
+- name: Create the cluster volume pool using libvirt
+  community.libvirt.virt_pool:
+    command: define
+    name: "{{ vm_cluster_pool }}"
+    xml: |-
+      <pool type='dir'>
+        <name>{{ vm_cluster_pool }}</name>
+        <target>
+          <path>{{ vm_pool_dir }}</path>
+          <permissions>
+            <mode>0755</mode>
+            <owner>0</owner>
+            <group>0</group>
+          </permissions>
+        </target>
+      </pool>
+    state: present
+
+- name: Activate the created pool
+  community.libvirt.virt_pool:
+    command: start
+    name: "{{ vm_cluster_pool }}"
+    state: active
+
+- name: Create the cluster network
+  community.libvirt.virt_net:
+    command: define
+    name: "{{ vm_cluster_net }}"
+    xml: |-
+      <network>
+        <name>{{ vm_cluster_net }}</name>
+        <forward mode='route'/>
+        <bridge name='virbr-{{vm_cluster_name}}-0' />
+      </network>
+    state: present
+
+- name: Activate the created network
+  community.libvirt.virt_net:
+    command: start
+    name: "{{ vm_cluster_net }}"
+    state: active

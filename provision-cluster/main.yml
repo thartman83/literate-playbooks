@@ -8,3 +8,4 @@
     - role: virtualization-services
     - role: prepare-vm-dirs
     - role: download-vm-image
+    - role: provision-vm
