@@ -20,9 +20,13 @@
     command: define
     xml: "{{ lookup('template', 'templates/vm-template.xml') }}"
   loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    index_var: idx
 
 - name: Start the vm
   community.libvirt.virt:
     state: running
     name: "{{ item }}"
   loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    index_var: idx

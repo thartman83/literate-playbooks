@@ -1,5 +1,10 @@
 ---
 
+- name: Create temporary location for downloading the base image
+  file:
+    path: "{{ vm_working_dir }}"
+    state: directory
+
 - name: Download checksum file
   get_url:
     url: "{{ vm_img_checksum_url }}"

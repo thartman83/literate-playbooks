@@ -28,21 +28,3 @@
     command: start
     name: "{{ vm_cluster_pool }}"
     state: active
-
-- name: Create the cluster network
-  community.libvirt.virt_net:
-    command: define
-    name: "{{ vm_cluster_net }}"
-    xml: |-
-      <network>
-        <name>{{ vm_cluster_net }}</name>
-        <forward mode='route'/>
-        <bridge name='virbr-{{vm_cluster_name}}-0' />
-      </network>
-    state: present
-
-- name: Activate the created network
-  community.libvirt.virt_net:
-    command: start
-    name: "{{ vm_cluster_net }}"
-    state: active

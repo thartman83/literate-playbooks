@@ -1,5 +1,6 @@
 #+TITLE: Provision a VM Cluster
 #+AUTHOR: Tom Hartman
+#+STARTUP: overview
 * General
 
 The purpose of this playbook is to spin up and down a set of bare virtual machines capable of being used in a kubernetes cluster on a vm host. These vms will be minimally configured to allow for ssh login and have a python instance install to allow for future ansible blaybooks to be run. The goal is to be able to spin up blank virtual machines that can be used for setting up small clusters for testing and development purposes. As a result, I do not consider these virtual machines to be permanent or anything other than ephemeral for non-production usage.
@@ -258,7 +259,7 @@ With the location created we can let libvirt know to assoicate the new cluster p
 
 With the storage area taken care we move on to prepare the network that the VMs will live on.
 
-#+begin_src yaml :tangle roles/prepare-vm-dirs/tasks/main.yml
+#+begin_src yaml
 
 - name: Create the cluster network
   community.libvirt.virt_net:
@@ -282,10 +283,20 @@ With the storage area taken care we move on to prepare the network that the VMs 
 
 *** Download the base VM image
 
-Debian stores all of the checksums for the various images in the download folder in a single file which means we will need to download the file and extract the value before downloading the base image. The following tasks will download the file and store it in a variable 'checksums'.
+Create a temporary location where we can download the base images before configuring them for use in the cluster.
 
 #+begin_src yaml :tangle roles/download-vm-image/tasks/main.yml
 ---
+
+- name: Create temporary location for downloading the base image
+  file:
+    path: "{{ vm_working_dir }}"
+    state: directory
+#+end_src
+
+Debian stores all of the checksums for the various images in the download folder in a single file which means we will need to download the file and extract the value before downloading the base image. The following tasks will download the file and store it in a variable 'checksums'.
+
+#+begin_src yaml :tangle roles/download-vm-image/tasks/main.yml
 
 - name: Download checksum file
   get_url:
@@ -355,10 +366,11 @@ Download the actual image file and verify it using the sha512 checksum that we s
       <target dev='vda' bus='virtio'/>
       <address type='pci' domain='0x0000' bus='0x05' slot='0x00' function='0x0'/>
     </disk>
-    <interface type='network'>
-      <source network='{{ vm_cluster_net }}'/>
-      <model type='virtio'/>
-      <address type='pci' domain='0x0000' bus='0x01' slot='0x00' function='0x0'/>
+    <interface type='direct'>
+      <mac address="12:34:56:78:9a:b{{ idx }}" />
+      <source dev="eno1" mode="bridge" />
+      <model type='virtio' />
+      <driver name="vhost" />
     </interface>
     <channel type='unix'>
       <target type='virtio' name='org.qemu.guest_agent.0'/>
@@ -399,11 +411,15 @@ Download the actual image file and verify it using the sha512 checksum that we s
     command: define
     xml: "{{ lookup('template', 'templates/vm-template.xml') }}"
   loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    index_var: idx
 
 - name: Start the vm
   community.libvirt.virt:
     state: running
     name: "{{ item }}"
   loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    index_var: idx
 
 #+end_src
