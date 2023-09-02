@@ -1,6 +1,36 @@
+:PROPERTIES:
+:TOC:      :include all :depth 5
+:END:
 #+TITLE: Provision a VM Cluster
 #+AUTHOR: Tom Hartman
 #+STARTUP: overview
+
+* Table of Contents
+:PROPERTIES:
+:TOC: :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+  - [[#requirements-and-prerequisites][Requirements and Prerequisites]]
+  - [[#assumptions][Assumptions]]
+  - [[#risks][Risks]]
+  - [[#naming-conventions][Naming Conventions]]
+  - [[#usage][Usage]]
+- [[#inventory][Inventory]]
+- [[#host-variables][Host Variables]]
+- [[#playbook-definitions][Playbook Definitions]]
+  - [[#provision-cluster][Provision Cluster]]
+    - [[#roles][Roles]]
+      - [[#virtualization-checks][Virtualization Checks]]
+      - [[#virtualization-packages][Virtualization Packages]]
+      - [[#virtualization-services][Virtualization Services]]
+      - [[#preparing-virtualization-environment][Preparing virtualization environment]]
+      - [[#download-the-base-vm-image][Download the base VM image]]
+      - [[#create-vms][Create VMs]]
+  - [[#unprovision-cluster][Unprovision Cluster]]
+    - [[#roles][Roles]]
+:END:
+
 * General
 
 The purpose of this playbook is to spin up and down a set of bare virtual machines capable of being used in a kubernetes cluster on a vm host. These vms will be minimally configured to allow for ssh login and have a python instance install to allow for future ansible blaybooks to be run. The goal is to be able to spin up blank virtual machines that can be used for setting up small clusters for testing and development purposes. As a result, I do not consider these virtual machines to be permanent or anything other than ephemeral for non-production usage.
@@ -66,16 +96,6 @@ In addition to re-naming the file to match the vm host name, the following top l
 #+begin_src yaml :tangle host_vars/anemoi.yml
 vmhost_cluster_name: anemoi
 vmhost_iface_name: eno0
-vm_cluster_vms:
-  - boreas
-  - zephyrus
-  - notus
-  - eurus
-vm_diskspace: 20G
-vm_mem: 2048
-vm_cpus: 1
-user: anemoi
-ssh_pub_key: ~/.ssh/anemoi_rsa.pub
 #+end_src
 
 The variable `vmhost_cluster_name` is used through out the playbook to customize other variables to keep things organized, segmented, and to prevent name collision. For simplicities sake I have made this the same name as the vm host but this can be updated as needed.
@@ -90,6 +110,19 @@ ip -br a | grep UP | cut -f1 -d' '
 : enp0s31f6
 
 The device will be used when specifying the networking portion of the virtual machines so that they can be bridged properly on to the network and be accessible from outside the vm host via macvtap bridges.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vm_cluster_vms:
+  - boreas
+  - zephyrus
+  - notus
+  - eurus
+vm_diskspace: 20G
+vm_mem: 2048
+vm_cpus: 1
+user: anemoi
+ssh_pub_key: ~/.ssh/anemoi_rsa.pub
+#+end_src
 
 For the VM host we will define the package names based on the host operating system. The package names below are for arch so adjust accordingly if they are not the same for the target operating system
 
@@ -141,13 +174,13 @@ For the VMs themselves we will create identical machines provisioned with the sa
 
 The playbook is invoked by called the main.yml file within this directory.
 
-** Main
+** Provision Cluster
 
-The main.yml file is the entry point for this playbook and will be used in combination with the action parameter to determine which roles will be run against the host.
+The provision-cluster.yml file is the entry point for this playbook and will be used in combination with the action parameter to determine which roles will be run against the host.
 
 We begin with a general playbook definition and setup, providing the name, the hosts to run against as well as indicating that this playbook will be run as the root user `become: true’.
 
-#+begin_src yaml :tangle main.yml
+#+begin_src yaml :tangle provision-cluster.yml
 ---
 - name: Provision virtual machines
   hosts: vmhost
@@ -161,9 +194,8 @@ We begin with a general playbook definition and setup, providing the name, the h
     - role: provision-vm
 #+end_src
 
-** Roles
-
-*** Virtualization Checks
+*** Roles
+**** Virtualization Checks
 
 The `virtualization checks` role will check that the target host(s) is capable of virtualization as a basic sanity check prior to beginning any other tasks or roles within this playbook.
 
@@ -191,7 +223,7 @@ We set LC_ALL=C to turn off any internationalization locales on the target syste
   failed_when: ret.stdout != 'VT-x' and ret.stdout != 'AMD-V'
 #+end_src
 
-*** Virtualization Packages
+**** Virtualization Packages
 
 We will need the following packages to be installed on the VM host in order to setup the various VMs. We will use the generic package task action and rely on the host_vars defined in [[*Host Variables][Host Variables]]. If the name of the values in different package names for you OS please update before running this task.
 
@@ -216,7 +248,7 @@ We will need the following packages to be installed on the VM host in order to s
 
 #+end_src
 
-*** Virtualization Services
+**** Virtualization Services
 
 We will also need to make sure that the libvirtd service has been started. Again we will be using the generic service package.
 
@@ -230,7 +262,7 @@ We will also need to make sure that the libvirtd service has been started. Again
     enabled: true
 #+end_src
 
-*** Preparing virtualization environment
+**** Preparing virtualization environment
 Before we can create the VMs we have some libvirt setup to do. Specifically we need to create a volume pool where the vm disk images will live in as well as define a network for the cluster to use. This is done so that spinning down the virtual machines can be done in a clean manner without cluttering the qemu:///system space with entries in the default pool and default network. When the vms are ready to come down we can destroy the volume pool as well as the network without impacting any other virtual machines that may live on the host.
 
 Start by creating the directory where the virtual machine disk volumes will reside, using the vm_pool_dir variable defined in the host_args. This defaults to /var/lib/libvirt/images/{{ cluster_name }} but can be configured as needed.
@@ -276,7 +308,7 @@ With the location created we can let libvirt know to assoicate the new cluster p
 
 With the storage area taken care we move on to prepare the network that the VMs will live on.
 
-*** Download the base VM image
+**** Download the base VM image
 
 Create a temporary location where we can download the base images before configuring them for use in the cluster.
 
@@ -319,7 +351,7 @@ Download the actual image file and verify it using the sha512 checksum that we s
 
 #+end_src
 
-*** Create VMs
+**** Create VMs
 
 #+begin_src yaml :tangle roles/provision-vm/tasks/main.yml
 - name: Copy the base image to the pool
@@ -421,3 +453,21 @@ Download the actual image file and verify it using the sha512 checksum that we s
     index_var: idx
 
 #+end_src
+
+
+** Unprovision Cluster
+
+`unprovision-cluster.yml' unsurprisingly will undo all of the work that its counterpart provision-cluster.yml creates. The goal is to get the vm host back to a clean state tearing down any and all aspects of the virtual machines including image pools, vm images and the virtual machines themselves. Needless to say this is a destructive process and all work and data associated with the virtual machines will be erased. Since the goal of this playbook is to create ephemeral virtual machines for testing purposes this should be fine but use and target this playbook at your own risk.
+
+#+begin_src yaml :tangle unprovision-cluster.yml
+- name: Unprovision virtual machines
+  hosts: vmhost
+  become: true
+  roles:
+    - role: shutdown-vms
+    - role: destroy-vms
+    - role: destroy-cluster-pool
+    - role: cleanup-tmp-workdir
+#+end_src
+
+*** Roles
