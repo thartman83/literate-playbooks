@@ -59,12 +59,42 @@ eurus
 
 * Host Variables
 
-Setup the variables for each host in their own respective file. These files need to be the same name as the name of the host in the hosts file if using dns. If it is being referenced by IP address the below yaml file should be name the IP address, eg: 172.17.1.123.yml
+This playbook requires a number of variables to keep configuration flexible.  Ansible by default will look for the following file for host variables host_vars/{host_name}.yml for the playbook. The file in this playbook should be renamed based on the name used in the vmhost group in the inventory file.
+
+In addition to re-naming the file to match the vm host name, the following top level variables should be review and customized based on the information about the target machine.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vmhost_cluster_name: anemoi
+vmhost_iface_name: eno0
+vm_cluster_vms:
+  - boreas
+  - zephyrus
+  - notus
+  - eurus
+vm_diskspace: 20G
+vm_mem: 2048
+vm_cpus: 1
+user: anemoi
+ssh_pub_key: ~/.ssh/anemoi_rsa.pub
+#+end_src
+
+The variable `vmhost_cluster_name` is used through out the playbook to customize other variables to keep things organized, segmented, and to prevent name collision. For simplicities sake I have made this the same name as the vm host but this can be updated as needed.
+
+The variable `vmhost_iface_name`is the name of the physical network interface on the host. On some systems this will be eth0 on others enp0s31f6 etc. Check the virtual machine host and update that value accordingly. The simplest way to find the name is to run the following command on the host.
+
+#+begin_src shell
+ip -br a | grep UP | cut -f1 -d' '
+#+end_src
+
+#+RESULTS:
+: enp0s31f6
+
+The device will be used when specifying the networking portion of the virtual machines so that they can be bridged properly on to the network and be accessible from outside the vm host via macvtap bridges.
 
 For the VM host we will define the package names based on the host operating system. The package names below are for arch so adjust accordingly if they are not the same for the target operating system
 
 #+begin_src yaml :tangle host_vars/anemoi.yml
----
+
 python_lxml_package: python-lxml
 qemu_package: qemu-system-x86
 qemu_firmware_package: qemu-system-x86-firmware
@@ -83,19 +113,10 @@ Additionally we will want to define the name of the services in case they are di
 libvirtd_service: libvirtd
 #+end_src
 
-Directories:
-
 #+begin_src yaml :tangle host_vars/anemoi.yml
-vm_cluster_name: anemoi
-vm_cluster_vms:
-  - boreas
-  - zephyrus
-  - notus
-  - eurus
-vm_cluster_pool: "{{ vm_cluster_name }}-pool"
-vm_cluster_net: "{{ vm_cluster_name }}-net"
+vm_cluster_pool: "{{ vmhost_cluster_name }}-pool"
 vm_working_dir: /tmp/vm_imgs/
-vm_pool_dir: "/var/lib/libvirt/images/{{ vm_cluster_name }}"
+vm_pool_dir: "/var/lib/libvirt/images/{{ vmhost_cluster_name }}"
 #+end_src
 
 For the VMs we will be using the cloud buster debian vm image as a base. It will be configured on a per VM basis with other configurations throughout the playbook process.
@@ -113,11 +134,7 @@ vm_img_checksum_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_c
 For the VMs themselves we will create identical machines provisioned with the same amount of disk space and memory. By default this playbook will provision each with 20G of disk space, 2G of memory, a default user of `anemoi` using the ssh public key ~/.ssh/anemoi_rsa as an authorized key.
 
 #+begin_src yaml :tangle host_vars/anemoi.yml
-vm_diskspace: 20G
-vm_mem: 2048
-vm_cpus: 1
-user: anemoi
-ssh_pub_key: ~/.ssh/anemoi_rsa.pub
+
 #+end_src
 
 * Playbook Definitions
@@ -259,28 +276,6 @@ With the location created we can let libvirt know to assoicate the new cluster p
 
 With the storage area taken care we move on to prepare the network that the VMs will live on.
 
-#+begin_src yaml
-
-- name: Create the cluster network
-  community.libvirt.virt_net:
-    command: define
-    name: "{{ vm_cluster_net }}"
-    xml: |-
-      <network>
-        <name>{{ vm_cluster_net }}</name>
-        <forward mode='route'/>
-        <bridge name='virbr-{{vm_cluster_name}}-0' />
-      </network>
-    state: present
-
-- name: Activate the created network
-  community.libvirt.virt_net:
-    command: start
-    name: "{{ vm_cluster_net }}"
-    state: active
-
-#+end_src
-
 *** Download the base VM image
 
 Create a temporary location where we can download the base images before configuring them for use in the cluster.
@@ -367,7 +362,7 @@ Download the actual image file and verify it using the sha512 checksum that we s
     </disk>
     <interface type='direct'>
       <mac address="12:34:56:78:9a:b{{ idx }}" />
-      <source dev="eno1" mode="bridge" />
+      <source dev="{{ vmhost_iface_name }}" mode="bridge" />
       <model type='virtio' />
       <driver name="vhost" />
     </interface>
