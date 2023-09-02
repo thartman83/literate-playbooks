@@ -36,4 +36,4 @@ vm_diskspace: 20G
 vm_mem: 2048
 vm_cpus: 1
 user: anemoi
-ssh_pub_key: ~/.ssh/anemoi_rsa
+ssh_pub_key: ~/.ssh/anemoi_rsa.pub

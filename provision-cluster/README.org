@@ -117,7 +117,7 @@ vm_diskspace: 20G
 vm_mem: 2048
 vm_cpus: 1
 user: anemoi
-ssh_pub_key: ~/.ssh/anemoi_rsa
+ssh_pub_key: ~/.ssh/anemoi_rsa.pub
 #+end_src
 
 * Playbook Definitions
@@ -342,8 +342,7 @@ Download the actual image file and verify it using the sha512 checksum that we s
     virt-customize -a {{ vm_pool_dir }}/{{ item }}.{{ vm_img_fmt }} \
       --hostname {{ item }} \
       --ssh-inject 'root:string:{{ lookup('file', '{{ ssh_pub_key }}') }}' \
-      --run-command 'systemctl start sshd' \
-      --install python \
+      --run-command 'ssh-keygen -A;systemctl start sshd' \
       --uninstall cloud-init
   loop: "{{ vm_cluster_vms }}"
 #+end_src
@@ -400,6 +399,10 @@ Download the actual image file and verify it using the sha512 checksum that we s
       <backend model='random'>/dev/urandom</backend>
       <address type='pci' domain='0x0000' bus='0x07' slot='0x00' function='0x0'/>
     </rng>
+    <console type='pty'>
+      <source path='/dev/pts/4'/>
+      <target port='0'/>
+    </console>
   </devices>
 </domain>
 #+end_src
