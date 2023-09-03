@@ -29,6 +29,9 @@
       - [[#create-vms][Create VMs]]
   - [[#unprovision-cluster][Unprovision Cluster]]
     - [[#roles][Roles]]
+      - [[#shutdown-virtual-machines][Shutdown Virtual Machines]]
+      - [[#destroy-cluster-images-and-pool][Destroy Cluster Images and Pool]]
+      - [[#cleanup][Cleanup]]
 :END:
 
 * General
@@ -464,10 +467,73 @@ Download the actual image file and verify it using the sha512 checksum that we s
   hosts: vmhost
   become: true
   roles:
-    - role: shutdown-vms
     - role: destroy-vms
     - role: destroy-cluster-pool
     - role: cleanup-tmp-workdir
 #+end_src
 
 *** Roles
+**** Shutdown Virtual Machines
+#+begin_src yaml :tangle roles/destroy-vms/tasks/main.yml
+---
+
+- name: Get VMs list
+  community.libvirt.virt:
+    command: list_vms
+  register: existing_vms
+  changed_when: no
+
+- name: Shutdown the virtual machines if they are still up
+  community.libvirt.virt:
+    command: destroy
+    name: "{{ vm }}"
+    state: inactive
+  loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    loop_var: vm
+
+- name: Undefine the virtual machine definitions
+  community.libvirt.virt:
+    command: undefine
+    state: undefine
+    name: "{{ vm }}"
+  loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    loop_var: vm
+
+#+end_src
+
+**** Destroy Cluster Images and Pool
+
+#+begin_src yaml :tangle roles/destroy-cluster-pool/tasks/main.yml
+---
+
+- name: Destroy the cluster pool via libvirt
+  community.libvirt.virt_pool:
+    command: destroy
+    name: "{{ vm_cluster_pool }}"
+    state: inactive
+
+- name: Undefine the pool
+  community.libvirt.virt_pool:
+    command: undefine
+    name: "{{ vm_cluster_pool }}"
+    state: undefined
+
+#+end_src
+
+**** Cleanup
+
+#+begin_src yaml :tangle roles/cleanup-tmp-workdir/tasks/main.yml
+---
+
+- name: Delete the pool storage directory
+  file:
+    path: "{{ vm_pool_dir }}"
+    state: absent
+
+- name: Delete the temporary download directory
+  file:
+    path: "{{ vm_working_dir }}"
+    state: absent
+#+end_src

@@ -17,7 +17,7 @@
     </disk>
     <interface type='direct'>
       <mac address="12:34:56:78:9a:b{{ idx }}" />
-      <source dev="eno1" mode="bridge" />
+      <source dev="{{ vmhost_iface_name }}" mode="bridge" />
       <model type='virtio' />
       <driver name="vhost" />
     </interface>

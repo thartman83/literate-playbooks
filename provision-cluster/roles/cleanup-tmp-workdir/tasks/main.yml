@@ -1,0 +1,11 @@
+---
+
+- name: Delete the pool storage directory
+  file:
+    path: "{{ vm_pool_dir }}"
+    state: absent
+
+- name: Delete the temporary download directory
+  file:
+    path: "{{ vm_working_dir }}"
+    state: absent

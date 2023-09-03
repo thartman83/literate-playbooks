@@ -1,7 +1,20 @@
 #+TITLE: My Playbooks
 #+AUTHOR: Tom Hartman
+
+* Table of Contents
+:PROPERTIES:
+:TOC:      :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+- [[#archiso][ArchIso]]
+- [[#provision-cluster][Provision Cluster]]
+:END:
+
 * General
 This is a set of playbooks that I have found useful while working on my home network
-* ArchIso
 
+* ArchIso
 Documentation and an ansible playbook for generating a customized bootable arch live environment.
+
+* Provision Cluster

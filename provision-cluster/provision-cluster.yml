@@ -1,0 +1,11 @@
+---
+- name: Provision virtual machines
+  hosts: vmhost
+  become: true
+  roles:
+    - role: virtualization-checks
+    - role: virtualization-packages
+    - role: virtualization-services
+    - role: prepare-vm-dirs
+    - role: download-vm-image
+    - role: provision-vm

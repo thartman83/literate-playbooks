@@ -1,0 +1,13 @@
+---
+
+- name: Destroy the cluster pool via libvirt
+  community.libvirt.virt_pool:
+    command: destroy
+    name: "{{ vm_cluster_pool }}"
+    state: inactive
+
+- name: Undefine the pool
+  community.libvirt.virt_pool:
+    command: undefine
+    name: "{{ vm_cluster_pool }}"
+    state: undefined
