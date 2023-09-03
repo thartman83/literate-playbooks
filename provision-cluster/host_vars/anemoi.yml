@@ -1,5 +1,5 @@
 vmhost_cluster_name: anemoi
-vmhost_iface_name: eno0
+vmhost_iface_name: eno1
 
 vm_cluster_vms:
   - boreas

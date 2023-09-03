@@ -23,3 +23,6 @@
   vars:
     sha_regex: "(.+)  {{ vm_img_name | string }}"
   register: copy_results
+
+- name: Resize the vm image
+  command: qemu-img resize "{{ vm_working_dir }}/{{ vm_img_name }}" "{{ vm_diskspace }}"

@@ -26,7 +26,7 @@
       - [[#virtualization-services][Virtualization Services]]
       - [[#preparing-virtualization-environment][Preparing virtualization environment]]
       - [[#download-the-base-vm-image][Download the base VM image]]
-      - [[#create-vms][Create VMs]]
+      - [[#provision-the-vms][Provision the VMs]]
   - [[#unprovision-cluster][Unprovision Cluster]]
     - [[#roles][Roles]]
       - [[#shutdown-virtual-machines][Shutdown Virtual Machines]]
@@ -98,7 +98,7 @@ In addition to re-naming the file to match the vm host name, the following top l
 
 #+begin_src yaml :tangle host_vars/anemoi.yml
 vmhost_cluster_name: anemoi
-vmhost_iface_name: eno0
+vmhost_iface_name: eno1
 #+end_src
 
 The variable `vmhost_cluster_name` is used through out the playbook to customize other variables to keep things organized, segmented, and to prevent name collision. For simplicities sake I have made this the same name as the vm host but this can be updated as needed.
@@ -354,7 +354,15 @@ Download the actual image file and verify it using the sha512 checksum that we s
 
 #+end_src
 
-**** Create VMs
+Resize the downloaded image to the size specified in the host variables.
+
+#+begin_src yaml :tangle roles/download-vm-image/tasks/main.yml
+- name: Resize the vm image
+  command: qemu-img resize "{{ vm_working_dir }}/{{ vm_img_name }}" "{{ vm_diskspace }}"
+
+#+end_src
+
+**** Provision the VMs
 
 #+begin_src yaml :tangle roles/provision-vm/tasks/main.yml
 - name: Copy the base image to the pool
@@ -369,12 +377,14 @@ Download the actual image file and verify it using the sha512 checksum that we s
 #+begin_src yaml :tangle roles/provision-vm/tasks/main.yml
 - name: Configure the images
   command: |
-    virt-customize -a {{ vm_pool_dir }}/{{ item }}.{{ vm_img_fmt }} \
-      --hostname {{ item }} \
+    virt-customize -a {{ vm_pool_dir }}/{{ vm }}.{{ vm_img_fmt }} \
+      --hostname {{ vm }} \
       --ssh-inject 'root:string:{{ lookup('file', '{{ ssh_pub_key }}') }}' \
       --run-command 'ssh-keygen -A;systemctl start sshd' \
       --uninstall cloud-init
   loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    loop_var: vm
 #+end_src
 
 #+begin_src yaml :tangle roles/provision-vm/templates/vm-template.xml
@@ -405,23 +415,8 @@ Download the actual image file and verify it using the sha512 checksum that we s
       <target type='virtio' name='org.qemu.guest_agent.0'/>
       <address type='virtio-serial' controller='0' bus='0' port='1'/>
     </channel>
-    <channel type='spicevmc'>
-      <target type='virtio' name='com.redhat.spice.0'/>
-      <address type='virtio-serial' controller='0' bus='0' port='2'/>
-    </channel>
-    <input type='tablet' bus='usb'>
-      <address type='usb' bus='0' port='1'/>
-    </input>
     <input type='mouse' bus='ps2'/>
     <input type='keyboard' bus='ps2'/>
-    <graphics type='spice' autoport='yes'>
-      <listen type='address'/>
-      <image compression='off'/>
-    </graphics>
-    <video>
-      <model type='qxl' ram='65536' vram='65536' vgamem='16384' heads='1' primary='yes'/>
-      <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x0'/>
-    </video>
     <memballoon model='virtio'>
       <address type='pci' domain='0x0000' bus='0x06' slot='0x00' function='0x0'/>
     </memballoon>
@@ -487,17 +482,16 @@ Download the actual image file and verify it using the sha512 checksum that we s
   community.libvirt.virt:
     command: destroy
     name: "{{ vm }}"
-    state: inactive
-  loop: "{{ vm_cluster_vms }}"
+    state: destroyed
+  loop: "{{ existing_vms.list_vms | intersect(vm_cluster_vms) }}"
   loop_control:
     loop_var: vm
 
 - name: Undefine the virtual machine definitions
   community.libvirt.virt:
     command: undefine
-    state: undefine
     name: "{{ vm }}"
-  loop: "{{ vm_cluster_vms }}"
+  loop: "{{ existing_vms.list_vms | intersect(vm_cluster_vms) }}"
   loop_control:
     loop_var: vm
 

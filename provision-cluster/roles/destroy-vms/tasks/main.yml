@@ -10,17 +10,15 @@
   community.libvirt.virt:
     command: destroy
     name: "{{ vm }}"
-    state: inactive
-  when: "vm not in existing_vms.list_vms"
-  loop: "{{ vm_cluster_vms }}"
+    state: destroyed
+  loop: "{{ existing_vms.list_vms | intersect(vm_cluster_vms) }}"
   loop_control:
     loop_var: vm
 
 - name: Undefine the virtual machine definitions
   community.libvirt.virt:
     command: undefine
-    state: undefine
     name: "{{ vm }}"
-  loop: "{{ vm_cluster_vms }}"
+  loop: "{{ existing_vms.list_vms | intersect(vm_cluster_vms) }}"
   loop_control:
     loop_var: vm
