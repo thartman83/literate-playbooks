@@ -1,7 +1,61 @@
-#+TITLE: My Playbooks
+#+TITLE: Literate Playbooks
 #+AUTHOR: Tom Hartman
-* General
-This is a set of playbooks that I have found useful while working on my home network
-* ArchIso
 
-Documentation and an ansible playbook for generating a customized bootable arch live environment.
+* Table of Contents
+:PROPERTIES:
+:TOC:      :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+- [[#literate-programming][Literate Programming]]
+  - [[#org-mode-and-babel][Org Mode and Babel]]
+  - [[#literate-playbooks][Literate Playbooks]]
+- [[#playbooks][Playbooks]]
+  - [[#archiso][ArchIso]]
+  - [[#provision-cluster][Provision Cluster]]
+:END:
+
+* General
+A set of Ansible playbooks written in the literate programming style using Org-Mode and Babel.
+
+* Literate Programming
+
+Literate programming is a way of documenting code snippets or scripts in a markdown file, where the documentation is co-mingled with the actual code to be executed. The best way to think about it is commenting your code but in reverse. Traditionally, source code uses comments to explain in human readable terms what specific sections or lines of code will do. Good code comments is just as important if not more important as good code (not going into self-documenting code). Literate programming flips code commenting on its head, making the documentation and human readable bits first class and the actual code secondary.
+
+This is extremely useful for documenting small snippets of code as well shell one-liners where what the code snippet does is more important than specific code itself or in cases where the scripting syntax is a bit arcane. Or put simply, cases where memorializing code is more important than memorizing code. Take the following shell oneliner.
+
+#+begin_src sh
+(PATTERN=PermitRootLogin; FILE=sshd_config; sed -i "/$PATTERN/s/^#//g" $FILE)
+#+end_src
+
+This will set two variables in a shell sub-process and use sed to find the specific line in the file and uncomment it (assuming that # is being used to comment the line). Probably something that I could use more than once, but since my day job doesn't often call for shell scripting or using sed I'm probably not going to remember the specific syntax and probably won't remember that I need to surround the code snippet in parenthesis so that it runs in a sub-process and doesn't pollute the run shell's variables. So instead I add it to my shell-onliners markdown file, and document what the code snippet does. If and when I need to use it again I don't need to do the hard work of finding the stackoverflow link where we found the code snippet in the first place.
+
+** Org Mode and Babel
+
+Org mode is a markdown language bundled within the emacs editor. It has a number of fantastic features for note taking and document authoring in plain text files. More information can be found at [[https://orgmode.org/][Org Mode]]. As with most markdown languages, org mode supports adding code blocks within the file but also supports executing and extracting the code blocks using another tool called babel. With babel you can execute the code blocks inline within the markdown file and automatically add the results of the executed code directly back into the markdown file. I've personally found this especially useful for writing reports using R. The report contains the R code being executed against the dataset and the results are added to the same markdown file, which can be exported into other formats like pdfs or html.
+
+In addition to executing the source code blocks, babel also supports the concept of tangling, where you specify in the source block definition a file to export the code blocks to. With it we can write what each code block does within the markdown file and then 'tangle' the markdown file which will export all of our code into script. This makes the markdown file, and the documentation, the source of truth for the script. If bugs are found or new features need to be added, we don't edit the script, we update the documentation and the source code blocks and then re-tangle. This provides and extra layer of documentation as to why we are making changes to the underlying code. If the files are kept in source control like say Git, a diff of the commit also provides human readable information about the change rather than just code.
+
+Github supports a number of different markdown file formats for their README files, including org mode. If you look within this repository you should see the README.org file you are currently reading. Feel free to look at it in raw mode to view the markdown syntax.
+
+I tend not be evangelical about specific tools or software in general and this is particularly true for Emacs as it isn't really my daily driver anymore for programming. But its hard not to recommend org mode as a tool for effective and efficient note taking, documentation and other non-programming writing.
+
+** Literate Playbooks
+
+Taking the concept of tangling code files a bit further, we can write a full Ansible playbook in a single documentation file, and tangle it into the various yaml files for roles, handlers and templates. Since at its core playbooks are designed to bring a set of hosts to a certain state, we can write each playbook starting with a description of the intended state, then work backwards writing the documentation of the steps needed to bring it into that state, then write and document the code that will actually run to bring it into that state.
+
+Another benefit of writing scripts this way is that I've found that at least for me. The process of describing what something does in writing tends to deepen my understanding of it as well as help me remember things. This is especially true for languages and syntax that I don't use on a daily basis. So while I may not remember tomorrow the specific YAML syntax for defining the loop variable name in an ansible file, I will remember that I've done it before (at least somewhere) and because everything is text based should be easily searchable. And with any luck I did a decent enough job documenting the section that I can remind myself quickly of what I did and more importantly why.
+
+* Playbooks
+
+** ArchIso
+
+An ansible playbook to generate a custom arch live environment that when installed to bootable media will allow headless ssh access based on a set key pair.
+
+[[file:/archiso][Archiso]]
+
+** Provision Cluster
+
+An set of two ansible playbooks to spin up and spin down a set of Virtual Machines on a target host. The virtual machines will be pre-configured to provide headless ssh access through a provided ssh key as well as have python pre-installed for further ansible playbooks to be run against them.
+
+[[file:/provision-cluster][Provision Cluster]]

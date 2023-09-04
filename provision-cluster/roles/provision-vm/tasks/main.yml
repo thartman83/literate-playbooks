@@ -1,0 +1,34 @@
+- name: Copy the base image to the pool
+  copy:
+    src: "{{ vm_working_dir }}/{{ vm_img_name }}"
+    dest: "{{ vm_pool_dir }}/{{ item }}.{{ vm_img_fmt }}"
+    remote_src: true
+  loop: "{{ vm_cluster_vms }}"
+
+- name: Configure the images
+  command: |
+    virt-customize -a {{ vm_pool_dir }}/{{ vm }}.{{ vm_img_fmt }} \
+      --hostname {{ vm }} \
+      --ssh-inject 'root:string:{{ lookup('file', '{{ ssh_pub_key }}') }}' \
+      --run-command 'ssh-keygen -A;systemctl start sshd' \
+      --install python \
+      --uninstall cloud-init
+  loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    loop_var: vm
+
+- name: Spin up the virtual machines
+  community.libvirt.virt:
+    command: define
+    xml: "{{ lookup('template', 'templates/vm-template.xml') }}"
+  loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    index_var: idx
+
+- name: Start the vm
+  community.libvirt.virt:
+    state: running
+    name: "{{ item }}"
+  loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    index_var: idx

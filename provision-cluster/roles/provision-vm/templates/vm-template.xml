@@ -1,0 +1,42 @@
+<domain type='kvm'>
+  <name>{{ item }}</name>
+  <memory unit='MiB'>{{ vm_mem }}</memory>
+  <vcpu placement='static'>{{ vm_cpus }}</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc-q35-5.2'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <cpu mode='host-model' check='none'/>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='{{ vm_pool_dir }}/{{ item }}.{{ vm_img_fmt }}'/>
+      <target dev='vda' bus='virtio'/>
+      <address type='pci' domain='0x0000' bus='0x05' slot='0x00' function='0x0'/>
+    </disk>
+    <interface type='direct'>
+      <mac address="12:34:56:78:9a:b{{ idx }}" />
+      <source dev="{{ vmhost_iface_name }}" mode="bridge" />
+      <model type='virtio' />
+      <driver name="vhost" />
+    </interface>
+    <channel type='unix'>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+      <address type='virtio-serial' controller='0' bus='0' port='1'/>
+    </channel>
+    <input type='mouse' bus='ps2'/>
+    <input type='keyboard' bus='ps2'/>
+    <memballoon model='virtio'>
+      <address type='pci' domain='0x0000' bus='0x06' slot='0x00' function='0x0'/>
+    </memballoon>
+    <rng model='virtio'>
+      <backend model='random'>/dev/urandom</backend>
+      <address type='pci' domain='0x0000' bus='0x07' slot='0x00' function='0x0'/>
+    </rng>
+    <console type='pty'>
+      <source path='/dev/pts/4'/>
+      <target port='0'/>
+    </console>
+  </devices>
+</domain>

@@ -1,0 +1,24 @@
+---
+
+- name: Get VMs list
+  community.libvirt.virt:
+    command: list_vms
+  register: existing_vms
+  changed_when: no
+
+- name: Shutdown the virtual machines if they are still up
+  community.libvirt.virt:
+    command: destroy
+    name: "{{ vm }}"
+    state: destroyed
+  loop: "{{ existing_vms.list_vms | intersect(vm_cluster_vms) }}"
+  loop_control:
+    loop_var: vm
+
+- name: Undefine the virtual machine definitions
+  community.libvirt.virt:
+    command: undefine
+    name: "{{ vm }}"
+  loop: "{{ existing_vms.list_vms | intersect(vm_cluster_vms) }}"
+  loop_control:
+    loop_var: vm

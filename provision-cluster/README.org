@@ -1,0 +1,546 @@
+:PROPERTIES:
+:TOC:      :include all :depth 5
+:END:
+#+TITLE: Provision a VM Cluster
+#+AUTHOR: Tom Hartman
+#+STARTUP: overview
+
+* Table of Contents
+:PROPERTIES:
+:TOC: :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+  - [[#requirements-and-prerequisites][Requirements and Prerequisites]]
+  - [[#assumptions][Assumptions]]
+  - [[#risks][Risks]]
+  - [[#naming-conventions][Naming Conventions]]
+  - [[#usage][Usage]]
+- [[#inventory][Inventory]]
+- [[#host-variables][Host Variables]]
+- [[#playbook-definitions][Playbook Definitions]]
+  - [[#provision-cluster][Provision Cluster]]
+    - [[#roles][Roles]]
+      - [[#virtualization-checks][Virtualization Checks]]
+      - [[#virtualization-packages][Virtualization Packages]]
+      - [[#virtualization-services][Virtualization Services]]
+      - [[#preparing-virtualization-environment][Preparing virtualization environment]]
+      - [[#download-the-base-vm-image][Download the base VM image]]
+      - [[#provision-the-vms][Provision the VMs]]
+  - [[#unprovision-cluster][Unprovision Cluster]]
+    - [[#roles][Roles]]
+      - [[#shutdown-virtual-machines][Shutdown Virtual Machines]]
+      - [[#destroy-cluster-images-and-pool][Destroy Cluster Images and Pool]]
+      - [[#cleanup][Cleanup]]
+:END:
+
+* General
+
+The purpose of this playbook is to spin up and down a set of bare virtual machines capable of being used in a kubernetes cluster on a vm host. These vms will be minimally configured to allow for ssh login and have a python instance install to allow for future ansible blaybooks to be run. The goal is to be able to spin up blank virtual machines that can be used for setting up small clusters for testing and development purposes. As a result, I do not consider these virtual machines to be permanent or anything other than ephemeral and for non-production usage.
+
+** Requirements and Prerequisites
+There is very little in the way of prerequisites other than a linux host that can do hardware emulation and virtualization. As of this writing I’m running this on an old NUC that I was being used as a media server so I’m not expecting it to win any races in terms of speed but should be good enough for development and testing purposes even if it runs a bit slow.
+
+** Assumptions
+
+These playbooks make as few assumptions about the host environment as possible. As with all ansible scripts the target host must be accessible by ansible and have python installed.
+
+There are a few host variables that are specific to my VM host such as the network interface name as well as a number of other variables that are documented in the [[*Host Variables][Host Variables]] section. I recommend reading through that section and making appropriate updates to those host variables as needed.
+
+** Risks
+
+This playbook will also be spinning up new virtual machines which could cause issues in terms of consuming resources on the host machine. Additionally, this playbook has the capability of unprovisioning virtual machines. This will destroy the virtual machine as well as any virtual disk associated with the vm. Take care in your host file and host variables that the names are pointing to the appropriate machine and virtual machines.
+
+** Naming Conventions
+I will primarily be calling the target host where the virtual machines are create the `VM host’ and the virtual machines within it sa `VMs’ however all of them do need actual host names as well. Within this document the VM host will be named anemoi and the VMs will be boreas, zephyrus, notus, and eurus after the four winds of Greek mythology. These will only be referenced in any file that actual requires using their actual host name and otherwise will be referred to in the more generic sense.
+
+** Usage
+
+The two playbooks defined are provision-cluster and un-provision cluster, which can be run by the following commands respectfully.
+
+#+begin_src sh
+ansible-playbook -i inventory/hosts provision-cluster.yml
+#+end_src
+
+#+begin_src sh
+ansible-playbook -i inventory/hosts unprovision-cluster.yml
+#+end_src
+
+* Inventory
+
+The inventory file for this playbook is pretty simple defining a single vmhost group which will represent the host where the virtual machines will be created.
+
+- vmhost
+  The host (or hosts) machine where the virtual machines will be created and started.
+
+#+begin_src yaml :tangle inventory/hosts.ini
+[vmhost]
+anemoi
+#+end_src
+
+* Host Variables
+
+This playbook requires a number of variables to keep configuration flexible.  Ansible by default will look for the following file for host variables host_vars/{host_name}.yml for the playbook. The file in this playbook should be renamed based on the name used in the vmhost group in the inventory file.
+
+** Host Information
+In addition to re-naming the file to match the vm host name, the following top level variables should be review and customized based on the information about the target machine.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vmhost_cluster_name: anemoi
+vmhost_iface_name: eno1
+#+end_src
+
+The variable `vmhost_cluster_name` is used through out the playbook to customize other variables to keep things organized, segmented, and to prevent name collision. For simplicities sake I have made this the same name as the vm host but this can be updated as needed.
+
+The variable `vmhost_iface_name`is the name of the physical network interface on the host. On some systems this will be eth0 on others enp0s31f6 etc. Check the virtual machine host and update that value accordingly. The simplest way to find the name is to run the following command on the host.
+
+#+begin_src shell
+ip -br a | grep UP | cut -f1 -d' '
+#+end_src
+
+The device will be used when specifying the networking portion of the virtual machines so that they can be bridged properly on to the network and be accessible from outside the vm host via macvtap bridges.
+
+** Virtual Machine configuration
+We will also define a set of variables that will determine the resources available to each virtual machine that will be spun up as well as the hostname of each.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vm_cluster_vms:
+  - boreas
+  - zephyrus
+  - notus
+  - eurus
+vm_diskspace: 20G
+vm_mem: 2048
+vm_cpus: 1
+ssh_pub_key: ~/.ssh/anemoi_rsa.pub
+#+end_src
+
+- vm_cluster_vms: a list of host names. This will be used when customizing each virtual machine image so that when they are spun up they will have a unique hostname on the network.
+- vm_diskspace: The amount of disk space each VM will have available to it.
+- vm_mem: The amount of memory that each VM will have access to from the host
+- vm_cpus: The number of cpu's that will be available to each VM from the host
+- ssh_pub_key: The location of the ssh public key that will be used as an authorized key for the root user on the virtual machines. Note that this is file is local to the machine that runs the playbook not local to the host(s) that the playbook will run on.
+
+** VM host package installation
+
+We need to make sure that a number of packages are install on the host machine in order to be able to create and start the virtual machines. The packages are defined in our host variable file because they are not necessarily the same across different linux distributions. The following are based off of the arch package names. Please update these to the distribution of the host as needed.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+
+python_lxml_package: python-lxml
+qemu_package: qemu-system-x86
+qemu_firmware_package: qemu-system-x86-firmware
+guestfs_tools_package: guestfs-tools
+dhclient_package: dhclient
+openbsd_netcat_package: openbsd-netcat
+dnsmasq_package: dnsmasq
+virt_install_package: virt-install
+bridge_utils_package: bridge-utils
+qemu_img_package: qemu-img
+libvirt_package: libvirt
+#+end_src
+
+** VM Host Services
+
+Additionally we will want to define the name of the services in case they are different across distributions as well. The playbook will start and enable these services as needed on the host machine.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+libvirtd_service: libvirtd
+#+end_src
+
+** VM Image definition
+
+For the VMs we will be using the cloud buster debian image as a base. It will be configured on a per VM basis with other configurations throughout the playbook.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vm_img_baseurl: https://cloud.debian.org/images/cloud/buster/
+vm_img_release_date: 20230802-1460
+vm_img_fmt: qcow2
+vm_img_name: "debian-10-generic-amd64-{{ vm_img_release_date }}.{{ vm_img_fmt }}"
+vm_download_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_name }}"
+vm_img_checksum_name: SHA512SUMS
+vm_img_checksum_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_checksum_name }}"
+#+end_src
+
+** VM Cluster Pool
+In order to maintain separation between other virtual machines on the host system we will want to specify its own storage pool when we create the actual virtual machine images.
+
+#+begin_src yaml :tangle host_vars/anemoi.yml
+vm_cluster_pool: "{{ vmhost_cluster_name }}-pool"
+vm_working_dir: /tmp/vm_imgs/
+vm_pool_dir: "/var/lib/libvirt/images/{{ vmhost_cluster_name }}"
+#+end_src
+
+The vm_working_dir and vm_pool_dir are directories on the host machine.
+
+* Playbook Definitions
+
+** Provision Cluster
+
+The `provision-cluster.yml' file is the entry point for this playbook and will be used in combination with the action parameter to determine which roles will be run against the host.
+
+We begin with a general playbook definition and setup, providing the name, the hosts to run against as well as indicating that this playbook will be run as the root user `become: true’.
+
+#+begin_src yaml :tangle provision-cluster.yml
+---
+- name: Provision virtual machines
+  hosts: vmhost
+  become: true
+  roles:
+    - role: virtualization-checks
+    - role: virtualization-packages
+    - role: virtualization-services
+    - role: prepare-vm-dirs
+    - role: download-vm-image
+    - role: provision-vm
+#+end_src
+
+*** Roles
+**** Virtualization Checks
+
+The `virtualization checks` role will check that the target host(s) is capable of virtualization as a basic sanity check prior to beginning any other tasks or roles within this playbook.
+
+The easiest way to achieve this is to use the `lscpu` utility and check the value of the Virtualization property of the CPU. We are looking for a value of VT-x for Intel chipsets or AMD-V for AMD. Were we to look at this by hand we would run:
+
+#+begin_src sh
+LC_ALL=C lscpu | grep Virtualization
+#+end_src
+
+We should see something like this as a result:
+#+begin_src text
+Virtualization:                  VT-x
+#+end_src
+
+We set LC_ALL=C to turn off any internationalization locales on the target system so that the results will come back in english (as the default) before we pass that to grep. I believe these days the C locale is really just POSIX but out of habit I still use C. The task to perform the check is as follows.
+
+#+begin_src yaml :tangle roles/virtualization-checks/tasks/main.yml
+---
+
+- name: Verify virtualization capabilities of the host
+  shell:
+    cmd: |-
+      LC_ALL=C lscpu | grep Virtualization: | sed -e 's/^.*Virtualization:\s*\(.*\)\s*$/\1/'
+  register: ret
+  failed_when: ret.stdout != 'VT-x' and ret.stdout != 'AMD-V'
+#+end_src
+
+**** Virtualization Packages
+
+We will need the following packages to be installed on the VM host in order to setup the various VMs. We will use the generic package task action and rely on the host_vars defined in [[*Host Variables][Host Variables]]. If the name of the values in different package names for you OS please update before running this task.
+
+#+begin_src yaml :tangle roles/virtualization-packages/tasks/main.yml
+---
+
+- name: Verify installation of virtualization packages
+  package:
+    name:
+      - "{{ python_lxml_package }}"
+      - "{{ qemu_package }}"
+      - "{{ qemu_firmware_package }}"
+      - "{{ dhclient_package }}"
+      - "{{ openbsd_netcat_package }}"
+      - "{{ dnsmasq_package }}"
+      - "{{ virt_install_package }}"
+      - "{{ bridge_utils_package }}"
+      - "{{ qemu_img_package }}"
+      - "{{ libvirt_package }}"
+      - "{{ guestfs_tools_package }}"
+    state: present
+
+#+end_src
+
+**** Virtualization Services
+
+We will also need to make sure that the libvirtd service has been started. Again we will be using the generic service package.
+
+#+begin_src yaml :tangle roles/virtualization-services/tasks/main.yml
+---
+
+- name: Start the libvirtd service
+  service:
+    name: "{{ libvirtd_service }}"
+    state: started
+    enabled: true
+#+end_src
+
+**** Preparing virtualization environment
+Before we can create the VMs we have some libvirt setup to do. Specifically we need to create a volume pool where the vm disk images will live in as well as define a network for the cluster to use. This is done so that spinning down the virtual machines can be done in a clean manner without cluttering the qemu:///system space with entries in the default pool and default network. When the vms are ready to come down we can destroy the volume pool as well as the network without impacting any other virtual machines that may live on the host.
+
+Start by creating the directory where the virtual machine disk volumes will reside, using the vm_pool_dir variable defined in the host_args. This defaults to /var/lib/libvirt/images/{{ cluster_name }} but can be configured as needed.
+
+#+begin_src yaml :tangle roles/prepare-vm-dirs/tasks/main.yml
+---
+
+- name: Create the cluster volume pool directory
+  file:
+    path: "{{ vm_pool_dir }}"
+    state: directory
+#+end_src
+
+With the location created we can let libvirt know to assoicate the new cluster pool with that folder. Once the pool has been turned on in qemu we can associate disk images as part of the cluster pool. The xml definition of the cluster pool is pretty simple, defining the pool '{{ vm_cluster_pool }} with the directory created in the previous task and set some reasonable permissions on accessing the volumes within the pool. With the new pool defined we can activate it.
+
+#+begin_src yaml :tangle roles/prepare-vm-dirs/tasks/main.yml
+
+- name: Create the cluster volume pool using libvirt
+  community.libvirt.virt_pool:
+    command: define
+    name: "{{ vm_cluster_pool }}"
+    xml: |-
+      <pool type='dir'>
+        <name>{{ vm_cluster_pool }}</name>
+        <target>
+          <path>{{ vm_pool_dir }}</path>
+          <permissions>
+            <mode>0755</mode>
+            <owner>0</owner>
+            <group>0</group>
+          </permissions>
+        </target>
+      </pool>
+    state: present
+
+- name: Activate the created pool
+  community.libvirt.virt_pool:
+    command: start
+    name: "{{ vm_cluster_pool }}"
+    state: active
+
+#+end_src
+
+With the storage area taken care we move on to prepare the network that the VMs will live on.
+
+**** Download the base VM image
+
+Create a temporary location where we can download the base images before configuring them for use in the cluster.
+
+#+begin_src yaml :tangle roles/download-vm-image/tasks/main.yml
+---
+
+- name: Create temporary location for downloading the base image
+  file:
+    path: "{{ vm_working_dir }}"
+    state: directory
+#+end_src
+
+Debian stores all of the checksums for the various images in the download folder in a single file which means we will need to download the file and extract the value before downloading the base image. The following tasks will download the file and store it in a variable 'checksums'.
+
+#+begin_src yaml :tangle roles/download-vm-image/tasks/main.yml
+
+- name: Download checksum file
+  get_url:
+    url: "{{ vm_img_checksum_url }}"
+    dest: "{{ vm_working_dir }}"
+
+- name: Extract sha256 checksum for the image we will be downloading
+  slurp:
+    src: "{{ vm_working_dir }}/{{vm_img_checksum_name }}"
+  register: checksums
+
+#+end_src
+
+Download the actual image file and verify it using the sha512 checksum that we stored previously. A little string interpolation magic is required to get the actual value of the checksum out of the variable. The above slurp command stores the contents in base64 encoding which will need to be decoded before running through a regex search.
+
+#+begin_src yaml :tangle roles/download-vm-image/tasks/main.yml
+- name: Download the base VM image
+  get_url:
+    url: "{{ vm_download_url }}"
+    dest: "{{ vm_working_dir }}/{{ vm_img_name }}"
+    checksum: "sha512:{{ checksums.content | b64decode | regex_search(sha_regex, '\\1') }}"
+  vars:
+    sha_regex: "(.+)  {{ vm_img_name | string }}"
+  register: copy_results
+
+#+end_src
+
+Resize the downloaded image to the size specified in the host variables.
+
+#+begin_src yaml :tangle roles/download-vm-image/tasks/main.yml
+- name: Resize the vm image
+  command: qemu-img resize "{{ vm_working_dir }}/{{ vm_img_name }}" "{{ vm_diskspace }}"
+
+#+end_src
+
+**** Provision the VMs
+
+The remaining tasks will use the 'vm_cluster_vms' to loop through the desired list of virtual machines names and create identical instances of them on the VM host.
+
+First of is creating the virtual machine image from the base image downloaded in the previous task. To do so we will copy the base image for each vm name into the created pool directory created earlier. Of all of the tasks this one is probably more variables than ansible.
+
+#+begin_src yaml :tangle roles/provision-vm/tasks/main.yml
+- name: Copy the base image to the pool
+  copy:
+    src: "{{ vm_working_dir }}/{{ vm_img_name }}"
+    dest: "{{ vm_pool_dir }}/{{ item }}.{{ vm_img_fmt }}"
+    remote_src: true
+  loop: "{{ vm_cluster_vms }}"
+
+#+end_src
+
+Before we start the vms we need to customize each image's operating system. This can be accomplished through a variety of ways using tools like cloud-init and others but the purpose of this playbook we want a pretty barebones setup. At a minimum we need the virtual machine to have a unique host name and to be accessible via ssh for other playbooks to be used against them and have python installed so ansible can connect and run playbooks against them.
+
+As stated above the task will loop through the virtual machines looking for their specific image, and configure them to use the specified hostname and to inject the correct ssh key as an authorized key.
+
+One key thing to note is the 'ssh-keygen -A' command. In testing I found that I was unable to connect to the virtual machine because it had not generated its own host keys. I think that process is typically done automatically when doing a normal installation, via install sshd or just the installation iso. Cloud images don't come with their own keys (which makes sense) and there is no process otherwise to tell the image that it needs to do so. This probably should be accomplished via some sort of 'run once' style script but for the transient purposes of these VMs it regenerating the host key isn't that big of a problem though it will likely lead to known host ssh errors on reboot.
+
+#+begin_src yaml :tangle roles/provision-vm/tasks/main.yml
+- name: Configure the images
+  command: |
+    virt-customize -a {{ vm_pool_dir }}/{{ vm }}.{{ vm_img_fmt }} \
+      --hostname {{ vm }} \
+      --ssh-inject 'root:string:{{ lookup('file', '{{ ssh_pub_key }}') }}' \
+      --run-command 'ssh-keygen -A;systemctl start sshd' \
+      --install python \
+      --uninstall cloud-init
+  loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    loop_var: vm
+#+end_src
+
+The counterpart to the operating system configuration is the actual virtual machine definition. Here we define the amount of memory provisioned for the virtual machine as well as the number of cpu's and other hardware devices. Again, keeping to the theme of this playbook, we are going for the minimum necessary. There is no graphics drivers or spice integration, these will be headless form that perspective. Libvirt uses xml for its configuration language and so we define a barebones virtual machine template below.
+
+#+begin_src yaml :tangle roles/provision-vm/templates/vm-template.xml
+<domain type='kvm'>
+  <name>{{ item }}</name>
+  <memory unit='MiB'>{{ vm_mem }}</memory>
+  <vcpu placement='static'>{{ vm_cpus }}</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc-q35-5.2'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <cpu mode='host-model' check='none'/>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='{{ vm_pool_dir }}/{{ item }}.{{ vm_img_fmt }}'/>
+      <target dev='vda' bus='virtio'/>
+      <address type='pci' domain='0x0000' bus='0x05' slot='0x00' function='0x0'/>
+    </disk>
+    <interface type='direct'>
+      <mac address="12:34:56:78:9a:b{{ idx }}" />
+      <source dev="{{ vmhost_iface_name }}" mode="bridge" />
+      <model type='virtio' />
+      <driver name="vhost" />
+    </interface>
+    <channel type='unix'>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+      <address type='virtio-serial' controller='0' bus='0' port='1'/>
+    </channel>
+    <input type='mouse' bus='ps2'/>
+    <input type='keyboard' bus='ps2'/>
+    <memballoon model='virtio'>
+      <address type='pci' domain='0x0000' bus='0x06' slot='0x00' function='0x0'/>
+    </memballoon>
+    <rng model='virtio'>
+      <backend model='random'>/dev/urandom</backend>
+      <address type='pci' domain='0x0000' bus='0x07' slot='0x00' function='0x0'/>
+    </rng>
+    <console type='pty'>
+      <source path='/dev/pts/4'/>
+      <target port='0'/>
+    </console>
+  </devices>
+</domain>
+#+end_src
+
+The network configuration for the virtual machine is setup to use the host's network port as defined in the host variable `vmhost_iface_name' and using macvtap drivers to bridge the vm's network to the hosts network, making it accesible to the host's network at large rather than running the cluster in it's own NAT'd network. This will make it so that the VMs will be accessible within the network and can again have further playbooks applied to them. Because each vm will need its own unique mac address we will use the base of `12:34:56:78:9a:b` followed by the index number of the vm being created to do so.
+
+#+begin_src yaml :tangle roles/provision-vm/tasks/main.yml
+
+- name: Spin up the virtual machines
+  community.libvirt.virt:
+    command: define
+    xml: "{{ lookup('template', 'templates/vm-template.xml') }}"
+  loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    index_var: idx
+
+- name: Start the vm
+  community.libvirt.virt:
+    state: running
+    name: "{{ item }}"
+  loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    index_var: idx
+
+#+end_src
+
+
+** Unprovision Cluster
+
+The `unprovision-cluster.yml' unsurprisingly will undo all of the work that its counterpart provision-cluster.yml creates. The goal is to get the vm host back to a clean state tearing down any and all aspects of the virtual machines including image pools, vm images and the virtual machines themselves. Needless to say this is a destructive process and all work and data associated with the virtual machines will be erased. Since the goal of this playbook is to create ephemeral virtual machines for testing purposes this should be fine but use and target this playbook at your own risk.
+
+#+begin_src yaml :tangle unprovision-cluster.yml
+- name: Unprovision virtual machines
+  hosts: vmhost
+  become: true
+  roles:
+    - role: destroy-vms
+    - role: destroy-cluster-pool
+    - role: cleanup-tmp-workdir
+#+end_src
+
+*** Roles
+**** Shutdown Virtual Machines
+#+begin_src yaml :tangle roles/destroy-vms/tasks/main.yml
+---
+
+- name: Get VMs list
+  community.libvirt.virt:
+    command: list_vms
+  register: existing_vms
+  changed_when: no
+
+- name: Shutdown the virtual machines if they are still up
+  community.libvirt.virt:
+    command: destroy
+    name: "{{ vm }}"
+    state: destroyed
+  loop: "{{ existing_vms.list_vms | intersect(vm_cluster_vms) }}"
+  loop_control:
+    loop_var: vm
+
+- name: Undefine the virtual machine definitions
+  community.libvirt.virt:
+    command: undefine
+    name: "{{ vm }}"
+  loop: "{{ existing_vms.list_vms | intersect(vm_cluster_vms) }}"
+  loop_control:
+    loop_var: vm
+
+#+end_src
+
+**** Destroy Cluster Images and Pool
+
+#+begin_src yaml :tangle roles/destroy-cluster-pool/tasks/main.yml
+---
+
+- name: Destroy the cluster pool via libvirt
+  community.libvirt.virt_pool:
+    command: destroy
+    name: "{{ vm_cluster_pool }}"
+    state: inactive
+
+- name: Undefine the pool
+  community.libvirt.virt_pool:
+    command: undefine
+    name: "{{ vm_cluster_pool }}"
+    state: undefined
+
+#+end_src
+
+**** Cleanup
+
+#+begin_src yaml :tangle roles/cleanup-tmp-workdir/tasks/main.yml
+---
+
+- name: Delete the pool storage directory
+  file:
+    path: "{{ vm_pool_dir }}"
+    state: absent
+
+- name: Delete the temporary download directory
+  file:
+    path: "{{ vm_working_dir }}"
+    state: absent
+#+end_src

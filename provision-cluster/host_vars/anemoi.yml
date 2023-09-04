@@ -1,0 +1,38 @@
+vmhost_cluster_name: anemoi
+vmhost_iface_name: eno1
+
+vm_cluster_vms:
+  - boreas
+  - zephyrus
+  - notus
+  - eurus
+vm_diskspace: 20G
+vm_mem: 2048
+vm_cpus: 1
+ssh_pub_key: ~/.ssh/anemoi_rsa.pub
+
+python_lxml_package: python-lxml
+qemu_package: qemu-system-x86
+qemu_firmware_package: qemu-system-x86-firmware
+guestfs_tools_package: guestfs-tools
+dhclient_package: dhclient
+openbsd_netcat_package: openbsd-netcat
+dnsmasq_package: dnsmasq
+virt_install_package: virt-install
+bridge_utils_package: bridge-utils
+qemu_img_package: qemu-img
+libvirt_package: libvirt
+
+libvirtd_service: libvirtd
+
+vm_img_baseurl: https://cloud.debian.org/images/cloud/buster/
+vm_img_release_date: 20230802-1460
+vm_img_fmt: qcow2
+vm_img_name: "debian-10-generic-amd64-{{ vm_img_release_date }}.{{ vm_img_fmt }}"
+vm_download_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_name }}"
+vm_img_checksum_name: SHA512SUMS
+vm_img_checksum_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_checksum_name }}"
+
+vm_cluster_pool: "{{ vmhost_cluster_name }}-pool"
+vm_working_dir: /tmp/vm_imgs/
+vm_pool_dir: "/var/lib/libvirt/images/{{ vmhost_cluster_name }}"

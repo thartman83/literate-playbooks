@@ -1,0 +1,17 @@
+---
+
+- name: Verify installation of virtualization packages
+  package:
+    name:
+      - "{{ python_lxml_package }}"
+      - "{{ qemu_package }}"
+      - "{{ qemu_firmware_package }}"
+      - "{{ dhclient_package }}"
+      - "{{ openbsd_netcat_package }}"
+      - "{{ dnsmasq_package }}"
+      - "{{ virt_install_package }}"
+      - "{{ bridge_utils_package }}"
+      - "{{ qemu_img_package }}"
+      - "{{ libvirt_package }}"
+      - "{{ guestfs_tools_package }}"
+    state: present

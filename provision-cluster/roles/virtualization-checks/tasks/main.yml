@@ -1,0 +1,8 @@
+---
+
+- name: Verify virtualization capabilities of the host
+  shell:
+    cmd: |-
+      LC_ALL=C lscpu | grep Virtualization: | sed -e 's/^.*Virtualization:\s*\(.*\)\s*$/\1/'
+  register: ret
+  failed_when: ret.stdout != 'VT-x' and ret.stdout != 'AMD-V'
