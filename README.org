@@ -18,3 +18,5 @@ This is a set of playbooks that I have found useful while working on my home net
 Documentation and an ansible playbook for generating a customized bootable arch live environment.
 
 * Provision Cluster
+
+[[file:/provision-cluster][Provision Cluster]]
