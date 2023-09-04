@@ -36,37 +36,36 @@
 
 * General
 
-The purpose of this playbook is to spin up and down a set of bare virtual machines capable of being used in a kubernetes cluster on a vm host. These vms will be minimally configured to allow for ssh login and have a python instance install to allow for future ansible blaybooks to be run. The goal is to be able to spin up blank virtual machines that can be used for setting up small clusters for testing and development purposes. As a result, I do not consider these virtual machines to be permanent or anything other than ephemeral for non-production usage.
+The purpose of this playbook is to spin up and down a set of bare virtual machines capable of being used in a kubernetes cluster on a vm host. These vms will be minimally configured to allow for ssh login and have a python instance install to allow for future ansible blaybooks to be run. The goal is to be able to spin up blank virtual machines that can be used for setting up small clusters for testing and development purposes. As a result, I do not consider these virtual machines to be permanent or anything other than ephemeral and for non-production usage.
 
 ** Requirements and Prerequisites
 There is very little in the way of prerequisites other than a linux host that can do hardware emulation and virtualization. As of this writing I’m running this on an old NUC that I was being used as a media server so I’m not expecting it to win any races in terms of speed but should be good enough for development and testing purposes even if it runs a bit slow.
 
 ** Assumptions
-There will be one or two tasks that are Arch Linux specific, but those are solely for verifying and installing if necessary the appropriate qemu packages. I will note those in the tasks section when applicable. They should be changed to reflect the hosts distribution package manager as needed.
+
+These playbooks make as few assumptions about the host environment as possible. As with all ansible scripts the target host must be accessible by ansible and have python installed.
+
+There are a few host variables that are specific to my VM host such as the network interface name as well as a number of other variables that are documented in the [[*Host Variables][Host Variables]] section. I recommend reading through that section and making appropriate updates to those host variables as needed.
 
 ** Risks
-This playbook obviously will also be spinning up new virtual machines which could cause issues in terms of consuming resources on the host machine. Additionally, this playbook has the capability of unprovisioning virtual machines. This will destroy the virtual machine as well as any virtual disk associated with the vm. Both options will have options to `check` the target environment both that it will be able to complete the action based on the resources available as well as report back what will be created/destroyed. It is recommended to run these checks prior to running to confirm that you will get the desired outcome.
+
+This playbook will also be spinning up new virtual machines which could cause issues in terms of consuming resources on the host machine. Additionally, this playbook has the capability of unprovisioning virtual machines. This will destroy the virtual machine as well as any virtual disk associated with the vm. Take care in your host file and host variables that the names are pointing to the appropriate machine and virtual machines.
 
 ** Naming Conventions
 I will primarily be calling the target host where the virtual machines are create the `VM host’ and the virtual machines within it sa `VMs’ however all of them do need actual host names as well. Within this document the VM host will be named anemoi and the VMs will be boreas, zephyrus, notus, and eurus after the four winds of Greek mythology. These will only be referenced in any file that actual requires using their actual host name and otherwise will be referred to in the more generic sense.
 
 ** Usage
 
-To run this playbook use the following command.
+The two playbooks defined are provision-cluster and un-provision cluster, which can be run by the following commands respectfully.
 
 #+begin_src sh
-ansible-playbook -i inventory/hosts main.yml --extra-args action=[action]
+ansible-playbook -i inventory/hosts provision-cluster.yml
 #+end_src
 
-The action key value pair will determine what type of action the playbook will take on the vmhost system. These actions are as follows:
+#+begin_src sh
+ansible-playbook -i inventory/hosts unprovision-cluster.yml
+#+end_src
 
-- check-provision: Check that the target system is capable of provisioning the virtual machines. It will both perform a check to see that the CPU support virtualization as well as if the host has enough resources to create and run the virtual machines in terms of memory and storage.
-
-- provision: Create the virtual machines based on the values in the vms group. This will create new images for the virtual machines, do minimal configuration of the images so that they are ansible ready, and finally create the virtual machines using the customized image.
-
-- check-unprovision:
-
-- unprovision:
 
 * Inventory
 
@@ -109,9 +108,6 @@ The variable `vmhost_iface_name`is the name of the physical network interface on
 ip -br a | grep UP | cut -f1 -d' '
 #+end_src
 
-#+RESULTS:
-: enp0s31f6
-
 The device will be used when specifying the networking portion of the virtual machines so that they can be bridged properly on to the network and be accessible from outside the vm host via macvtap bridges.
 
 #+begin_src yaml :tangle host_vars/anemoi.yml
@@ -123,7 +119,6 @@ vm_cluster_vms:
 vm_diskspace: 20G
 vm_mem: 2048
 vm_cpus: 1
-user: anemoi
 ssh_pub_key: ~/.ssh/anemoi_rsa.pub
 #+end_src
 
