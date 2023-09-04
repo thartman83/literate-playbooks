@@ -9,7 +9,6 @@ vm_cluster_vms:
 vm_diskspace: 20G
 vm_mem: 2048
 vm_cpus: 1
-user: anemoi
 ssh_pub_key: ~/.ssh/anemoi_rsa.pub
 
 python_lxml_package: python-lxml
@@ -26,10 +25,6 @@ libvirt_package: libvirt
 
 libvirtd_service: libvirtd
 
-vm_cluster_pool: "{{ vmhost_cluster_name }}-pool"
-vm_working_dir: /tmp/vm_imgs/
-vm_pool_dir: "/var/lib/libvirt/images/{{ vmhost_cluster_name }}"
-
 vm_img_baseurl: https://cloud.debian.org/images/cloud/buster/
 vm_img_release_date: 20230802-1460
 vm_img_fmt: qcow2
@@ -38,4 +33,6 @@ vm_download_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_name 
 vm_img_checksum_name: SHA512SUMS
 vm_img_checksum_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_checksum_name }}"
 
-
+vm_cluster_pool: "{{ vmhost_cluster_name }}-pool"
+vm_working_dir: /tmp/vm_imgs/
+vm_pool_dir: "/var/lib/libvirt/images/{{ vmhost_cluster_name }}"

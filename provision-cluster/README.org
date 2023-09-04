@@ -66,33 +66,23 @@ ansible-playbook -i inventory/hosts provision-cluster.yml
 ansible-playbook -i inventory/hosts unprovision-cluster.yml
 #+end_src
 
-
 * Inventory
 
-The playbook expects the following host groups be defined
+The inventory file for this playbook is pretty simple defining a single vmhost group which will represent the host where the virtual machines will be created.
 
 - vmhost
   The host (or hosts) machine where the virtual machines will be created and started.
-- vms
-  A list of virtual machines to be created on the target machine.
-
-  The number of vmhosts and VMs is entirely arbitrary though at least one will need to be defined for each. For the rest of this documentation the assumption will be that there is a single VM host named anemoi and 4 vms to be managed: boreas, zephyrus, notus, and eurus. These are defined in inventory/hosts.ini as below:
 
 #+begin_src yaml :tangle inventory/hosts.ini
 [vmhost]
 anemoi
-
-[vms]
-boreas
-zephyrus
-notus
-eurus
 #+end_src
 
 * Host Variables
 
 This playbook requires a number of variables to keep configuration flexible.  Ansible by default will look for the following file for host variables host_vars/{host_name}.yml for the playbook. The file in this playbook should be renamed based on the name used in the vmhost group in the inventory file.
 
+** Host Information
 In addition to re-naming the file to match the vm host name, the following top level variables should be review and customized based on the information about the target machine.
 
 #+begin_src yaml :tangle host_vars/anemoi.yml
@@ -110,6 +100,9 @@ ip -br a | grep UP | cut -f1 -d' '
 
 The device will be used when specifying the networking portion of the virtual machines so that they can be bridged properly on to the network and be accessible from outside the vm host via macvtap bridges.
 
+** Virtual Machine configuration
+We will also define a set of variables that will determine the resources available to each virtual machine that will be spun up as well as the hostname of each.
+
 #+begin_src yaml :tangle host_vars/anemoi.yml
 vm_cluster_vms:
   - boreas
@@ -122,7 +115,15 @@ vm_cpus: 1
 ssh_pub_key: ~/.ssh/anemoi_rsa.pub
 #+end_src
 
-For the VM host we will define the package names based on the host operating system. The package names below are for arch so adjust accordingly if they are not the same for the target operating system
+- vm_cluster_vms: a list of host names. This will be used when customizing each virtual machine image so that when they are spun up they will have a unique hostname on the network.
+- vm_diskspace: The amount of disk space each VM will have available to it.
+- vm_mem: The amount of memory that each VM will have access to from the host
+- vm_cpus: The number of cpu's that will be available to each VM from the host
+- ssh_pub_key: The location of the ssh public key that will be used as an authorized key for the root user on the virtual machines. Note that this is file is local to the machine that runs the playbook not local to the host(s) that the playbook will run on.
+
+** VM host package installation
+
+We need to make sure that a number of packages are install on the host machine in order to be able to create and start the virtual machines. The packages are defined in our host variable file because they are not necessarily the same across different linux distributions. The following are based off of the arch package names. Please update these to the distribution of the host as needed.
 
 #+begin_src yaml :tangle host_vars/anemoi.yml
 
@@ -139,18 +140,17 @@ qemu_img_package: qemu-img
 libvirt_package: libvirt
 #+end_src
 
-Additionally we will want to define the name of the services in case they are different across distributions
+** VM Host Services
+
+Additionally we will want to define the name of the services in case they are different across distributions as well. The playbook will start and enable these services as needed on the host machine.
+
 #+begin_src yaml :tangle host_vars/anemoi.yml
 libvirtd_service: libvirtd
 #+end_src
 
-#+begin_src yaml :tangle host_vars/anemoi.yml
-vm_cluster_pool: "{{ vmhost_cluster_name }}-pool"
-vm_working_dir: /tmp/vm_imgs/
-vm_pool_dir: "/var/lib/libvirt/images/{{ vmhost_cluster_name }}"
-#+end_src
+** VM Image definition
 
-For the VMs we will be using the cloud buster debian vm image as a base. It will be configured on a per VM basis with other configurations throughout the playbook process.
+For the VMs we will be using the cloud buster debian image as a base. It will be configured on a per VM basis with other configurations throughout the playbook.
 
 #+begin_src yaml :tangle host_vars/anemoi.yml
 vm_img_baseurl: https://cloud.debian.org/images/cloud/buster/
@@ -162,19 +162,22 @@ vm_img_checksum_name: SHA512SUMS
 vm_img_checksum_url: "{{ vm_img_baseurl }}/{{ vm_img_release_date }}/{{ vm_img_checksum_name }}"
 #+end_src
 
-For the VMs themselves we will create identical machines provisioned with the same amount of disk space and memory. By default this playbook will provision each with 20G of disk space, 2G of memory, a default user of `anemoi` using the ssh public key ~/.ssh/anemoi_rsa as an authorized key.
+** VM Cluster Pool
+In order to maintain separation between other virtual machines on the host system we will want to specify its own storage pool when we create the actual virtual machine images.
 
 #+begin_src yaml :tangle host_vars/anemoi.yml
-
+vm_cluster_pool: "{{ vmhost_cluster_name }}-pool"
+vm_working_dir: /tmp/vm_imgs/
+vm_pool_dir: "/var/lib/libvirt/images/{{ vmhost_cluster_name }}"
 #+end_src
+
+The vm_working_dir and vm_pool_dir are directories on the host machine.
 
 * Playbook Definitions
 
-The playbook is invoked by called the main.yml file within this directory.
-
 ** Provision Cluster
 
-The provision-cluster.yml file is the entry point for this playbook and will be used in combination with the action parameter to determine which roles will be run against the host.
+The `provision-cluster.yml' file is the entry point for this playbook and will be used in combination with the action parameter to determine which roles will be run against the host.
 
 We begin with a general playbook definition and setup, providing the name, the hosts to run against as well as indicating that this playbook will be run as the root user `become: true’.
 
@@ -465,7 +468,7 @@ The network configuration for the virtual machine is setup to use the host's net
 
 ** Unprovision Cluster
 
-`unprovision-cluster.yml' unsurprisingly will undo all of the work that its counterpart provision-cluster.yml creates. The goal is to get the vm host back to a clean state tearing down any and all aspects of the virtual machines including image pools, vm images and the virtual machines themselves. Needless to say this is a destructive process and all work and data associated with the virtual machines will be erased. Since the goal of this playbook is to create ephemeral virtual machines for testing purposes this should be fine but use and target this playbook at your own risk.
+The `unprovision-cluster.yml' unsurprisingly will undo all of the work that its counterpart provision-cluster.yml creates. The goal is to get the vm host back to a clean state tearing down any and all aspects of the virtual machines including image pools, vm images and the virtual machines themselves. Needless to say this is a destructive process and all work and data associated with the virtual machines will be erased. Since the goal of this playbook is to create ephemeral virtual machines for testing purposes this should be fine but use and target this playbook at your own risk.
 
 #+begin_src yaml :tangle unprovision-cluster.yml
 - name: Unprovision virtual machines

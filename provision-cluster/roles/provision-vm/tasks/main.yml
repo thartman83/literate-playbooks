@@ -7,12 +7,15 @@
 
 - name: Configure the images
   command: |
-    virt-customize -a {{ vm_pool_dir }}/{{ item }}.{{ vm_img_fmt }} \
-      --hostname {{ item }} \
+    virt-customize -a {{ vm_pool_dir }}/{{ vm }}.{{ vm_img_fmt }} \
+      --hostname {{ vm }} \
       --ssh-inject 'root:string:{{ lookup('file', '{{ ssh_pub_key }}') }}' \
       --run-command 'ssh-keygen -A;systemctl start sshd' \
+      --install python \
       --uninstall cloud-init
   loop: "{{ vm_cluster_vms }}"
+  loop_control:
+    loop_var: vm
 
 - name: Spin up the virtual machines
   community.libvirt.virt:
