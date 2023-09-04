@@ -1,4 +1,4 @@
-#+TITLE: My Playbooks
+#+TITLE: Literate Playbooks
 #+AUTHOR: Tom Hartman
 
 * Table of Contents
