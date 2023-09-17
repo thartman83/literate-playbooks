@@ -14,3 +14,4 @@
   roles:
     - role: k3s-worker-roles
     - role: k3s-helm-controller
+    - role: k3s-loadbalancer

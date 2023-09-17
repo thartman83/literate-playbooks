@@ -30,3 +30,16 @@
   failed_when: (kubectl_nodes_data.stdout | regex_search(control_plane_regex, multiline=True)) == ""
   vars:
     control_plane_regex: '{{ inventory_hostname }}.*Ready.*control-plane,master'
+
+- name: Install required packages for ansible k8s module
+  package:
+    name:
+      - python3-pip
+
+- name: Install python packages
+  pip:
+    name:
+      - kubernetes
+      - pyYAML
+      - jsonpatch
+    executable: pip3

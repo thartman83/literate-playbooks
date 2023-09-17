@@ -47,15 +47,19 @@ k3s_nodes:
   - eurus
   - zephyrus
 
-kube_config_dir: ~/.kube
+kube_config_dir: /root/.kube
 helm_src: https://get.helm.sh/helm-v3.12.3-linux-amd64.tar.gz
 helm_archive: helm-v3.12.3-linux-amd64.tar.gz
 helm_checksum: 1b2313cd198d45eab00cc37c38f6b1ca0a948ba279c29e322bdf426d406129b5
 helm_gpgkey: "672C 657B E06B 4B30 969C 4A57 4614 49C2 5E36 B98E"
+
+metallb_helm_repourl: https://metallb.github.io/metallb
+metallb_namespace: metallb-system
+metallb_iprange: 172.17.1.60-172.17.1.69
+
 #+end_src
 
 * Host Variables
-
 
 * Playbook Definitions
 
@@ -76,6 +80,8 @@ helm_gpgkey: "672C 657B E06B 4B30 969C 4A57 4614 49C2 5E36 B98E"
   roles:
     - role: k3s-worker-roles
     - role: k3s-helm-controller
+    - role: k3s-loadbalancer
+
 
 #+end_src
 
@@ -132,6 +138,23 @@ We have to follow up the installation with a reboot unfortunately but once that 
   failed_when: (kubectl_nodes_data.stdout | regex_search(control_plane_regex, multiline=True)) == ""
   vars:
     control_plane_regex: '{{ inventory_hostname }}.*Ready.*control-plane,master'
+#+end_src
+
+In order to run k8s ansible tasks the controller will need the following additional packages installed: python-kubernetes, pyYaml, and jsonpatch.
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Install required packages for ansible k8s module
+  package:
+    name:
+      - python3-pip
+
+- name: Install python packages
+  pip:
+    name:
+      - kubernetes
+      - pyYAML
+      - jsonpatch
+    executable: pip3
 #+end_src
 
 *** Setup k3s on the works
@@ -241,4 +264,58 @@ Download the helm package and verify. Then move the executable into /usr/local/b
     dest: /usr/local/bin/
     mode: 700
   when: "which_helm.rc == 1"
+#+end_src
+
+*** Load Balancer
+
+Add metal load balancer to the cluster.
+
+Add the repository url
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
+- name: Add helm metallb chart repository
+  kubernetes.core.helm_repository:
+    name: metallb
+    repo_url: "{{ metallb_helm_repourl }}"
+
+- name: Deploy metal loadbalancer to the cluster
+  kubernetes.core.helm:
+    name: metallb
+    chart_ref: metallb/metallb
+    release_namespace: "{{ metallb_namespace }}"
+    create_namespace: true
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/templates/metallb-ippool.yml
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-pool
+  namespace: {{ metallb_namespace }}
+spec:
+  addresses:
+  - {{ metallb_iprange }}
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/templates/metallb-l2advertisement.yml
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: default
+  namespace: {{ metallb_namespace }}
+spec:
+  ipAddressPools:
+  - default-pool
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
+- name: Apply metallb ip address pool configuration
+  k8s:
+    definition: "{{ lookup('template','templates/metallb-ippool.yml') | from_yaml }}"
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
+- name: Apply metallb L2 Advertisement
+  k8s:
+    definition: "{{ lookup('template', 'templates/metallb-l2advertisement.yml') | from_yaml }}"
 #+end_src
