@@ -1,0 +1,244 @@
+-*- mode: org; mode: org-make-toc-mode -*-
+#+TITLE: Provision K3S Cluster
+#+AUTHOR: Tom Hartman
+#+STARTUP: overview
+* Table of Contents
+:PROPERTIES:
+:TOC:      :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+- [[#inventory][Inventory]]
+- [[#host-variables][Host Variables]]
+- [[#playbook-definitions][Playbook Definitions]]
+  - [[#roles][Roles]]
+    - [[#setup-k3s-on-controller][Setup k3s on controller]]
+:END:
+
+* General
+Provision a new k3s cluster on listed hosts
+
+* Inventory
+
+#+begin_src ini :tangle inventory/hosts.ini
+[controller]
+boreas
+
+[workers]
+notus
+eurus
+zephyrus
+
+[nodes]
+boreas
+notus
+eurus
+zephyrus
+#+end_src
+
+* Group Variables
+#+begin_src yaml :tangle group_vars/all
+k3spasswd: k3spasswd
+net_prefix: 172.17.1.
+k3s_primary_controller: boreas
+k3s_nodes:
+  - boreas
+  - notus
+  - eurus
+  - zephyrus
+
+kube_config_dir: ~/.kube
+helm_src: https://get.helm.sh/helm-v3.12.3-linux-amd64.tar.gz
+helm_archive: helm-v3.12.3-linux-amd64.tar.gz
+helm_checksum: 1b2313cd198d45eab00cc37c38f6b1ca0a948ba279c29e322bdf426d406129b5
+helm_gpgkey: "672C 657B E06B 4B30 969C 4A57 4614 49C2 5E36 B98E"
+#+end_src
+
+* Host Variables
+
+
+* Playbook Definitions
+
+#+begin_src yaml :tangle provision-k3s.yml
+---
+- name: Provision a new k3s cluster controller
+  hosts: controller
+  roles:
+    - role: k3s-controller
+
+- name: Provision the k3s cluter workers
+  hosts: workers
+  roles:
+    - role: k3s-worker
+
+- name: Provision a new k3s cluster controller
+  hosts: controller
+  roles:
+    - role: k3s-worker-roles
+    - role: k3s-helm-controller
+
+#+end_src
+
+** Roles
+
+*** Setup k3s on controller
+
+First step is to install k3s on the controllers. First we check to see if the controller already has k3s installed. Running which seems to be the simplest way to check this though I wish there was a built in command to accomplish this rather than having to do stuff like ignoring errors and returning an rc value.
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Check if k3s is already installed on the controller
+  command: which k3s
+  register: which_k3s
+  ignore_errors: True
+  changed_when: "which_k3s.rc == 1"
+#+end_src
+
+K3s will need to know what the ip address is of the controller
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Get the ip address
+  shell:
+    cmd: |-
+      ip a | sed -n '{{ ipaddr_regex }}'
+  vars:
+    ipaddr_regex: 's/.*inet \({{ net_prefix }}[0-9]*\).*/\1/p'
+  register: ipaddr
+  when: "which_k3s.rc == 1"
+#+end_src
+
+Again doing this using commands rather than built commands feels a little off but it works.
+
+And now we do something we know we shouldn't do and curl directly into a subshell but again this is the normal installation method unfortunately.
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Provision the controller nodes
+  shell:
+    cmd: |-
+      curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --disable servicelb --token "{{ k3spasswd }}" --node-ip "{{ ipaddr.stdout }}" --disable-cloud-controller --disable local-storage
+  when: "which_k3s.rc == 1"
+
+- name: Reboot controller nodes
+  reboot:
+    reboot_timeout: 1000
+  when: "which_k3s.rc == 1"
+#+end_src
+
+We have to follow up the installation with a reboot unfortunately but once that is done we should see the controller show up as a node in kubectl.
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Check that the control plane is running
+  command: kubectl get nodes
+  register: kubectl_nodes_data
+  failed_when: (kubectl_nodes_data.stdout | regex_search(control_plane_regex, multiline=True)) == ""
+  vars:
+    control_plane_regex: '{{ inventory_hostname }}.*Ready.*control-plane,master'
+#+end_src
+
+*** Setup k3s on the works
+Now we need to install k3s on each of the workers from the controller if it is not already present
+
+#+begin_src yaml :tangle roles/k3s-worker/tasks/main.yml
+- name: Check if k3s is already installed on the worker
+  command: which k3s
+  register: which_k3s
+  ignore_errors: True
+  changed_when: "which_k3s.rc == 1"
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-worker/tasks/main.yml
+- name: Provision the controller nodes
+  shell:
+    cmd: |-
+      curl -sfL https://get.k3s.io | K3S_URL=https://{{ k3s_primary_controller }}:6443 K3S_TOKEN={{ k3spasswd }} sh -
+  when: "which_k3s.rc == 1"
+
+- name: Reboot the worker node
+  reboot:
+    reboot_timeout: 1000
+  when: "which_k3s.rc == 1"
+#+end_src
+
+*** Let workers be workers
+
+We now need to use the controller to mark all of the nodes as viable workers.
+
+#+begin_src yaml :tangle roles/k3s-worker-roles/tasks/main.yml
+- name: Add worker node type for all nodes
+  command: kubectl label node {{ item }} kubernetes.io/role=worker
+  loop: "{{ k3s_nodes }}"
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-worker-roles/tasks/main.yml
+- name: Add worker node type for all nodes
+  command: kubectl label node {{ item }} node-type=worker
+  loop: "{{ k3s_nodes }}"
+#+end_src
+
+*** Controller Helm
+
+Make sure that helm is installed on the controller, first we will need to check that git is available
+
+#+begin_src yaml :tangle roles/k3s-helm-controller/tasks/main.yml
+- name: The helm controller will need git installed
+  package:
+    name:
+      - git
+
+- name: Ensure that helm is installed
+  command: which helm
+  register: which_helm
+  ignore_errors: True
+
+#+end_src
+
+For the moment we are using which command to check that the executable is available. This can probably be accomplish by using stat and looping over the environment path but for the moment this will do.
+
+Setup a directory for kube configuration that helm will use locally. We export the kubectl configuration and then link it in /etc/environment.
+
+#+begin_src yaml :tangle roles/k3s-helm-controller/tasks/main.yml
+- name: Setup the kube configuration directory
+  file:
+    path: "{{ kube_config_dir }}"
+    state: directory
+
+- name: Grab the kubectl config
+  command: k3s kubectl config view --raw
+  register: kube_config
+
+- name: Create the config file
+  copy:
+    content: "{{ kube_config.stdout }}"
+    dest: "{{ kube_config_dir }}/config"
+    mode: 600
+
+- name: Add the kube config into the environment
+  lineinfile:
+    path: /etc/environment
+    line: "KUBECONFIG={{ kube_config_dir }}/config"
+#+end_src
+
+Download the helm package and verify. Then move the executable into /usr/local/bin.
+
+#+begin_src yaml :tangle roles/k3s-helm-controller/tasks/main.yml
+- name: Download the helm source
+  get_url:
+    url: "{{ helm_src }}"
+    dest: "/tmp"
+    checksum: "sha256:{{ helm_checksum }}"
+  when: "which_helm.rc == 1"
+
+- name: Unarchive the helm source
+  unarchive:
+    src: "/tmp/{{ helm_archive }}"
+    dest: "/tmp/"
+    remote_src: True
+  when: "which_helm.rc == 1"
+
+- name: Move helm into usr/local/bin
+  copy:
+    remote_src: True
+    src: /tmp/linux-amd64/helm
+    dest: /usr/local/bin/
+    mode: 700
+  when: "which_helm.rc == 1"
+#+end_src

@@ -1,0 +1,32 @@
+- name: Check if k3s is already installed on the controller
+  command: which k3s
+  register: which_k3s
+  ignore_errors: True
+  changed_when: "which_k3s.rc == 1"
+
+- name: Get the ip address
+  shell:
+    cmd: |-
+      ip a | sed -n '{{ ipaddr_regex }}'
+  vars:
+    ipaddr_regex: 's/.*inet \({{ net_prefix }}[0-9]*\).*/\1/p'
+  register: ipaddr
+  when: "which_k3s.rc == 1"
+
+- name: Provision the controller nodes
+  shell:
+    cmd: |-
+      curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --disable servicelb --token "{{ k3spasswd }}" --node-ip "{{ ipaddr.stdout }}" --disable-cloud-controller --disable local-storage
+  when: "which_k3s.rc == 1"
+
+- name: Reboot controller nodes
+  reboot:
+    reboot_timeout: 1000
+  when: "which_k3s.rc == 1"
+
+- name: Check that the control plane is running
+  command: kubectl get nodes
+  register: kubectl_nodes_data
+  failed_when: (kubectl_nodes_data.stdout | regex_search(control_plane_regex, multiline=True)) == ""
+  vars:
+    control_plane_regex: '{{ inventory_hostname }}.*Ready.*control-plane,master'

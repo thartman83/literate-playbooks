@@ -1,0 +1,16 @@
+---
+- name: Provision a new k3s cluster controller
+  hosts: controller
+  roles:
+    - role: k3s-controller
+
+- name: Provision the k3s cluter workers
+  hosts: workers
+  roles:
+    - role: k3s-worker
+
+- name: Provision a new k3s cluster controller
+  hosts: controller
+  roles:
+    - role: k3s-worker-roles
+    - role: k3s-helm-controller
