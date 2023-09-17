@@ -283,7 +283,8 @@ Add the repository url
     name: metallb
     chart_ref: metallb/metallb
     release_namespace: "{{ metallb_namespace }}"
-    create_namespace: true
+    create_namespace: True
+    wait: True
 #+end_src
 
 #+begin_src yaml :tangle roles/k3s-loadbalancer/templates/metallb-ippool.yml

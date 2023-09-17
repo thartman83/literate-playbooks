@@ -8,7 +8,8 @@
     name: metallb
     chart_ref: metallb/metallb
     release_namespace: "{{ metallb_namespace }}"
-    create_namespace: true
+    create_namespace: True
+    wait: True
 
 - name: Apply metallb ip address pool configuration
   k8s:
