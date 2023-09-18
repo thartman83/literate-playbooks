@@ -57,6 +57,10 @@ metallb_helm_repourl: https://metallb.github.io/metallb
 metallb_namespace: metallb-system
 metallb_iprange: 172.17.1.60-172.17.1.69
 
+longhorn_storage_dir: /storage
+longhorn_helm_repourl: https://charts.longhorn.io
+longhorn_namespace: longhorn-system
+longhorn_loadbalancer_ip: 172.17.1.61
 #+end_src
 
 * Host Variables
@@ -82,7 +86,15 @@ metallb_iprange: 172.17.1.60-172.17.1.69
     - role: k3s-helm-controller
     - role: k3s-loadbalancer
 
+- name: Provision longhorn storage on all works
+  hosts: nodes
+  roles:
+    - role: k3s-storage-common
 
+- name: Provision longhorn controller
+  hosts: controller
+  roles:
+    - role: k3s-storage-controller
 #+end_src
 
 ** Roles
@@ -319,4 +331,58 @@ spec:
 - name: Apply metallb L2 Advertisement
   k8s:
     definition: "{{ lookup('template', 'templates/metallb-l2advertisement.yml') | from_yaml }}"
+#+end_src
+
+*** Longhorn
+For all nodes in the cluster prepare the storage location and install packages that longhorn will need for provisioning storage across the nodes.
+
+#+begin_src yaml :tangle roles/k3s-storage-common/tasks/main.yml
+- name: Create the storage directory if it does not exist
+  ansible.builtin.file:
+    path: "{{ longhorn_storage_dir }}"
+    state: directory
+
+- name: Install common nfs prereqs on all nodes
+  package:
+    name:
+      - nfs-common
+      - open-iscsi
+      - util-linux
+    state: present
+#+end_src
+
+#+begin_src sh
+helm install longhorn longhorn/longhorn --namespace longhorn-system --create-namespace --set defaultSettings.defaultDataPath="/storage" --set service.ui.loadBalancerIP="10.0.0.71" --set service.ui.type="LoadBalancer"
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-storage-controller/tasks/main.yml
+- name: Install Longhorn IO prereqs on all nodes
+  apt:
+    pkg:
+      - python3-pip
+    state: present
+
+- name: Install PyYAML python package
+  ansible.builtin.pip:
+    name: PyYAML
+
+- name: Add longhorn repository to the controller
+  kubernetes.core.helm_repository:
+    name: longhorn
+    repo_url: "{{ longhorn_helm_repourl }}"
+
+- name: Install longhorn via helm
+  kubernetes.core.helm:
+   name: longhorn
+   chart_ref: longhorn/longhorn
+   release_namespace: "{{ longhorn_namespace }}"
+   create_namespace: true
+   set_values:
+     - value: service.ui.loadBalancerIP="{{ longhorn_loadbalancer_ip }}"
+       value_type: string
+     - value: service.ui.type=LoadBalancer
+       value_type: string
+     - value: defaultSettings.defaultDataPath="{{ longhorn_storage_dir }}"
+       value_type: string
+
 #+end_src

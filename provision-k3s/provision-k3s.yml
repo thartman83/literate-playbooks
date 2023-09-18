@@ -15,3 +15,13 @@
     - role: k3s-worker-roles
     - role: k3s-helm-controller
     - role: k3s-loadbalancer
+
+- name: Provision longhorn storage on all works
+  hosts: nodes
+  roles:
+    - role: k3s-storage-common
+
+- name: Provision longhorn controller
+  hosts: controller
+  roles:
+    - role: k3s-storage-controller
