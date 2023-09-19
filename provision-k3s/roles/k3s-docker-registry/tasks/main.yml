@@ -1,0 +1,14 @@
+- name: Create a docker registry namespace
+  kubernetes.core.k8s:
+    name: "{{ docker_reg_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+
+- name: Create persistent volume for the registry
+  k8s:
+    definition: "{{ lookup('template', 'templates/registry-pvc.yml') | from_yaml }}"
+
+- name: Add secrets
+  k8s:
+    definition: "{{ lookup('template', 'templates/cert-secrets.yml') | from_yaml }}"

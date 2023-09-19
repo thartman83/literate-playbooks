@@ -21,3 +21,11 @@ longhorn_storage_dir: /storage
 longhorn_helm_repourl: https://charts.longhorn.io
 longhorn_namespace: longhorn-system
 longhorn_loadbalancer_ip: 172.17.1.61
+
+docker_reg_cert_localpath: ~/cert
+docker_reg_cert_name: registry-cert
+docker_reg_namespace: docker-registry
+docker_reg_pvc_name: docker-regsitry-pvc
+docker_reg_pvc_size: 5Gi
+docker_reg_replicas: 1
+docker_reg_container_port: 5000

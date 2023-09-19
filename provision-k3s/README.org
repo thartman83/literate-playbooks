@@ -61,6 +61,14 @@ longhorn_storage_dir: /storage
 longhorn_helm_repourl: https://charts.longhorn.io
 longhorn_namespace: longhorn-system
 longhorn_loadbalancer_ip: 172.17.1.61
+
+docker_reg_cert_localpath: ~/cert
+docker_reg_cert_name: registry-cert
+docker_reg_namespace: docker-registry
+docker_reg_pvc_name: docker-regsitry-pvc
+docker_reg_pvc_size: 5Gi
+docker_reg_replicas: 1
+docker_reg_container_port: 5000
 #+end_src
 
 * Host Variables
@@ -68,33 +76,38 @@ longhorn_loadbalancer_ip: 172.17.1.61
 * Playbook Definitions
 
 #+begin_src yaml :tangle provision-k3s.yml
----
-- name: Provision a new k3s cluster controller
+# ---
+# - name: Provision a new k3s cluster controller
+#   hosts: controller
+#   roles:
+#     - role: k3s-controller
+
+# - name: Provision the k3s cluter workers
+#   hosts: workers
+#   roles:
+#     - role: k3s-worker
+
+# - name: Provision a new k3s cluster controller
+#   hosts: controller
+#   roles:
+#     - role: k3s-worker-roles
+#     - role: k3s-helm-controller
+#     - role: k3s-loadbalancer
+
+# - name: Provision longhorn storage on all works
+#   hosts: nodes
+#   roles:
+#     - role: k3s-storage-common
+
+# - name: Provision longhorn controller
+#   hosts: controller
+#   roles:
+#     - role: k3s-storage-controller
+
+- name: Docker registry
   hosts: controller
   roles:
-    - role: k3s-controller
-
-- name: Provision the k3s cluter workers
-  hosts: workers
-  roles:
-    - role: k3s-worker
-
-- name: Provision a new k3s cluster controller
-  hosts: controller
-  roles:
-    - role: k3s-worker-roles
-    - role: k3s-helm-controller
-    - role: k3s-loadbalancer
-
-- name: Provision longhorn storage on all works
-  hosts: nodes
-  roles:
-    - role: k3s-storage-common
-
-- name: Provision longhorn controller
-  hosts: controller
-  roles:
-    - role: k3s-storage-controller
+    - role: k3s-docker-registry
 #+end_src
 
 ** Roles
@@ -385,4 +398,103 @@ helm install longhorn longhorn/longhorn --namespace longhorn-system --create-nam
      - value: defaultSettings.defaultDataPath="{{ longhorn_storage_dir }}"
        value_type: string
 
+#+end_src
+
+*** Docker Registry
+
+Create the docker registry namespace
+#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
+- name: Create a docker registry namespace
+  kubernetes.core.k8s:
+    name: "{{ docker_reg_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+#+end_src
+
+Create a persistent volume for the registry
+
+#+begin_src yaml :tangle roles/k3s-docker-registry/templates/registry-pvc.yml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ docker_reg_pvc_name }}
+  namespace: {{ docker_reg_namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: {{ docker_reg_pvc_size }}
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
+- name: Create persistent volume for the registry
+  k8s:
+    definition: "{{ lookup('template', 'templates/registry-pvc.yml') | from_yaml }}"
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-docker-registry/templates/cert-secrets.yml
+apiVersion: v1
+data:
+  docker-reg-tls.crt: {{ lookup('file', '/home/thartman/certs/registry.crt') | b64encode }}
+  docker-reg-tls.key: {{ lookup('file', '/home/thartman/certs/registry.key') | b64encode }}
+kind: Secret
+metadata:
+  name: {{ docker_reg_cert_name }}
+  namespace: {{ docker_reg_namespace }}
+type: kubernetes.io/tls
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
+- name: Add secrets
+  k8s:
+    definition: "{{ lookup('template', 'templates/cert-secrets.yml') | from_yaml }}"
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-docker-registry/templates/registry-deployment.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: registry
+  name: registry
+  namespace: {{ docker_reg_namespace }}
+spec:
+  replicas: {{ docker_reg_replicas }}
+  selector:
+    matchLabels:
+      run: registry
+  template:
+    metadata:
+      labels:
+        run: registry
+    spec:
+      nodeSelector:
+        node-type: worker
+      containers:
+      - name: registry
+        image: registry:2
+        ports:
+        - containerPort: {{ docker_reg_container_port }}
+        env:
+        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+          value: "/certs/tls.crt"
+        - name: REGISTRY_HTTP_TLS_KEY
+          value: "/certs/tls.key"
+        volumeMounts:
+        - name: registry-certs
+          mountPath: "/certs"
+          readOnly: true
+        - name: registry-data
+          mountPath: /var/lib/registry
+          subPath: registry
+      volumes:
+      - name: registry-certs
+        secret:
+          secretName: registry-cert
+      - name: registry-data
+        persistentVolumeClaim:
+          claimName: registry
 #+end_src
