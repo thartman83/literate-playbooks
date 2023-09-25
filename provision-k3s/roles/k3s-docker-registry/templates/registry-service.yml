@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ docker_reg_service_name }}
+  namespace: {{ docker_reg_namespace }}
+  annotations:
+    metallb.universe.tf/address-pool: default-pool
+spec:
+  selector:
+    app: {{ docker_reg_label }}
+  ports:
+  - port: 5000
+    targetPort: 5000
+  type: LoadBalancer
+  loadBalancerIP: {{ docker_reg_service_ip }}

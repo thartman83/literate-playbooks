@@ -19,6 +19,7 @@
    chart_ref: longhorn/longhorn
    release_namespace: "{{ longhorn_namespace }}"
    create_namespace: true
+   update_repo_cache: True
    set_values:
      - value: service.ui.loadBalancerIP="{{ longhorn_loadbalancer_ip }}"
        value_type: string

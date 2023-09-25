@@ -5,6 +5,10 @@
     kind: Namespace
     state: present
 
+- name: Create the issuer for cert-manager
+  k8s:
+    definition: "{{ lookup('template', 'templates/docker-registry-cert.yml') }}"
+
 - name: Create persistent volume for the registry
   k8s:
     definition: "{{ lookup('template', 'templates/registry-pvc.yml') | from_yaml }}"
@@ -12,3 +16,11 @@
 - name: Add secrets
   k8s:
     definition: "{{ lookup('template', 'templates/cert-secrets.yml') | from_yaml }}"
+
+- name: Deploy the registry to the cluster
+  k8s:
+    definition: "{{ lookup('template', 'templates/registry-deployment.yml') | from_yaml }}"
+
+- name: Deploy the registry service
+  k8s:
+    definition: "{{ lookup('template', 'templates/registry-service.yml') | from_yaml }}"

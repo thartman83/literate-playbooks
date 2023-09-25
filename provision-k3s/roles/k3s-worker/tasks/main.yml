@@ -1,10 +1,12 @@
 - name: Check if k3s is already installed on the worker
+  tags: k3s-workers
   command: which k3s
   register: which_k3s
   ignore_errors: True
   changed_when: "which_k3s.rc == 1"
 
 - name: Provision the controller nodes
+  tags: k3s-workers
   shell:
     cmd: |-
       curl -sfL https://get.k3s.io | K3S_URL=https://{{ k3s_primary_controller }}:6443 K3S_TOKEN={{ k3spasswd }} sh -

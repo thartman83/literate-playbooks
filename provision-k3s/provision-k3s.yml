@@ -1,32 +1,62 @@
-# ---
-# - name: Provision a new k3s cluster controller
-#   hosts: controller
-#   roles:
-#     - role: k3s-controller
+---
+- name: Provision a new k3s cluster controller
+  hosts: controller
+  roles:
+    - role: k3s-controller
+  tags: k3s-controller
 
-# - name: Provision the k3s cluter workers
-#   hosts: workers
-#   roles:
-#     - role: k3s-worker
+- name: Provision the k3s cluter workers
+  hosts: workers
+  roles:
+    - role: k3s-worker
+  tags: k3s-workers
 
-# - name: Provision a new k3s cluster controller
-#   hosts: controller
-#   roles:
-#     - role: k3s-worker-roles
-#     - role: k3s-helm-controller
-#     - role: k3s-loadbalancer
+- name: Provision nodes as workers roles
+  hosts: controller
+  roles:
+    - role: k3s-worker-roles
+  tags:
+    - k3s-workers
 
-# - name: Provision longhorn storage on all works
-#   hosts: nodes
-#   roles:
-#     - role: k3s-storage-common
+- name: Provision helm on the controller
+  hosts: controller
+  roles:
+    - role: k3s-helm-controller
+  tags:
+    - helm
 
-# - name: Provision longhorn controller
-#   hosts: controller
-#   roles:
-#     - role: k3s-storage-controller
+- name: Provision metallb loadbalancer on the cluster
+  hosts: controller
+  roles:
+    - role: k3s-loadbalancer
+  tags: loadbalancer
+
+- name: Provision longhorn storage on all works
+  hosts: nodes
+  roles:
+    - role: k3s-storage-common
+  tags:
+    - longhorn-common
+    - longhorn
+
+- name: Provision longhorn controller
+  hosts: controller
+  roles:
+    - role: k3s-storage-controller
+  tags:
+    - longhorn-controller
+    - longhorn
+
+- name: Cert Manager
+  hosts: controller
+  roles:
+    - role: k3s-cert-manager
+  tags:
+    - cert-manager
 
 - name: Docker registry
   hosts: controller
   roles:
     - role: k3s-docker-registry
+  tags:
+    - docker-registry

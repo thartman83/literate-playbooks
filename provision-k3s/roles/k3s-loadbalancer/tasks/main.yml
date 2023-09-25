@@ -10,6 +10,7 @@
     release_namespace: "{{ metallb_namespace }}"
     create_namespace: True
     wait: True
+    update_repo_cache: True
 
 - name: Apply metallb ip address pool configuration
   k8s:
