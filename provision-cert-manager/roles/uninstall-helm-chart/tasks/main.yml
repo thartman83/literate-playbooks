@@ -1,0 +1,6 @@
+- name: Uninstall the helm chart
+  kubernetes.core.helm:
+    name: cert-manager
+    release_namespace: "{{ cert_manager_namespace }}"
+    state: absent
+    wait: true

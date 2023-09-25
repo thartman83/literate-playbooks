@@ -1,0 +1,6 @@
+- name: Create Cert Manager registry namespace
+  kubernetes.core.k8s:
+    name: "{{ cert_manager_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present

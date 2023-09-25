@@ -1,0 +1,9 @@
+---
+- name: Provision the Cert-Manager on the cluster
+  hosts: controllers
+  become: true
+  roles:
+    - role: create-namespace
+    - role: add-ca-secret
+    - role: install-helm-chart
+    - role: add-cluster-issuer

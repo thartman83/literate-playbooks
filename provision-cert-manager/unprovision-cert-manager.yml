@@ -1,0 +1,7 @@
+---
+- name: Provision the Cert-Manager on the cluster
+  hosts: controllers
+  become: true
+  roles:
+    - role: uninstall-helm-chart
+    - role: delete-namespace

@@ -1,0 +1,166 @@
+:PROPERTIES:
+:TOC:      :include all :depth 5
+:END:
+#+TITLE: Provision Cert-Manager
+#+AUTHOR: Tom Hartman
+#+STARTUP: overview
+* Table of Contents
+:PROPERTIES:
+:TOC: :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+- [[#inventory][Inventory]]
+- [[#group-variables][Group Variables]]
+- [[#playbook-definition][Playbook Definition]]
+  - [[#provision][Provision]]
+  - [[#unprovision][Unprovision]]
+- [[#roles][Roles]]
+  - [[#helm-prerequisites][Helm Prerequisites]]
+  - [[#create-cert-manager-namespace][Create Cert Manager namespace]]
+  - [[#add-ca-secret][Add CA Secret]]
+  - [[#install-cert-manager][Install Cert-Manager]]
+  - [[#add-cluster-issuer][Add Cluster Issuer]]
+  - [[#uninstall-helm-chart][Uninstall Helm Chart]]
+  - [[#delete-cert-manager-namespace][Delete cert-manager namespace]]
+:END:
+* General
+* Inventory
+The inventory for this playbook is going to be the main kubernetes controller to install cert-manager and configure its deployment
+
+#+begin_src ini :tangle inventory/hosts.ini
+[controllers]
+boreas
+#+end_src
+
+* Group Variables
+
+#+begin_src yaml :tangle group_vars/all
+cert_manager_repourl: https://charts.jetstack.io
+cert_manager_loadbalancer_ip: 172.17.1.63
+cert_manager_namespace: cert-manager
+cert_manager_version: v1.13.0
+
+ca_secret: ca-secret
+ca_crt: ~/certs/ca.crt
+ca_key: ~/certs/ca.key
+#+end_src
+
+* Playbook Definition
+
+** Provision
+#+begin_src yaml :tangle provision-cert-manager.yml
+---
+- name: Provision the Cert-Manager on the cluster
+  hosts: controllers
+  become: true
+  roles:
+    - role: create-namespace
+    - role: add-ca-secret
+    - role: install-helm-chart
+    - role: add-cluster-issuer
+#+end_src
+
+** Unprovision
+#+begin_src yaml :tangle unprovision-cert-manager.yml
+---
+- name: Provision the Cert-Manager on the cluster
+  hosts: controllers
+  become: true
+  roles:
+    - role: uninstall-helm-chart
+    - role: delete-namespace
+#+end_src
+
+* Roles
+
+** Helm Prerequisites
+
+** Create Cert Manager namespace
+
+#+begin_src yaml :tangle roles/create-namespace/tasks/main.yml
+- name: Create Cert Manager registry namespace
+  kubernetes.core.k8s:
+    name: "{{ cert_manager_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+#+end_src
+
+** Add CA Secret
+
+#+begin_src yaml :tangle roles/add-ca-secret/templates/add-ca-secret.yml
+apiVersion: v1
+data:
+  tls.crt: {{ lookup('file', ca_crt ) | b64encode }}
+  tls.key: {{ lookup('file', ca_key ) | b64encode }}
+kind: Secret
+metadata:
+  name: {{ ca_secret }}
+  namespace: {{ cert_manager_namespace }}
+type: kubernetes.io/tls
+#+end_src
+
+#+begin_src yaml :tangle roles/add-ca-secret/tasks/main.yml
+- name: Create the Certificate Authority secret
+  k8s:
+    definition: "{{ lookup('template', 'templates/add-ca-secret.yml') }}"
+#+end_src
+
+** Install Cert-Manager
+#+begin_src yaml :tangle roles/install-helm-chart/tasks/main.yml
+- name: Add jetstack repository to the controller
+  kubernetes.core.helm_repository:
+    name: jetstack
+    repo_url: "{{ cert_manager_repourl }}"
+
+- name: Install cert-manager via helm
+  kubernetes.core.helm:
+   name: cert-manager
+   chart_ref: jetstack/cert-manager
+   release_namespace: "{{ cert_manager_namespace }}"
+   update_repo_cache: True
+   set_values:
+     - value: installCRDs=true
+       value_type: string
+#+end_src
+
+** Add Cluster Issuer
+
+#+begin_src yaml :tangle roles/add-cluster-issuer/templates/cert-manager-issuer.yml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ cert_manager_namespace }}-issuer
+  namespace: {{ cert_manager_namespace }}
+spec:
+  ca:
+    secretName: {{ ca_secret }}
+#+end_src
+
+#+begin_src yaml :tangle roles/add-cluster-issuer/tasks/main.yml
+- name: Create the issuer for cert-manager
+  k8s:
+    definition: "{{ lookup('template', 'templates/cert-manager-issuer.yml') }}"
+#+end_src
+
+** Uninstall Helm Chart
+
+#+begin_src yaml :tangle roles/uninstall-helm-chart/tasks/main.yml
+- name: Uninstall the helm chart
+  kubernetes.core.helm:
+    name: cert-manager
+    release_namespace: "{{ cert_manager_namespace }}"
+    state: absent
+    wait: true
+#+end_src
+
+** Delete cert-manager namespace
+#+begin_src yaml :tangle roles/delete-namespace/tasks/main.yml
+- name: Delete Cert Manager registry namespace
+  kubernetes.core.k8s:
+    name: "{{ cert_manager_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: absent
+#+end_src
