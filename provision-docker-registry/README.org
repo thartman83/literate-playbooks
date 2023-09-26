@@ -7,42 +7,82 @@
 :END:
 :CONTENTS:
 - [[#general][General]]
+  - [[#requirements-and-prerequisites][Requirements and Prerequisites]]
+  - [[#usage][Usage]]
 - [[#inventory][Inventory]]
 - [[#group-variables][Group Variables]]
 - [[#playbook-definition][Playbook Definition]]
+  - [[#provision][Provision]]
+  - [[#unprovision][Unprovision]]
 - [[#roles][Roles]]
   - [[#create-namespace][Create Namespace]]
   - [[#create-certificate][Create Certificate]]
-  - [[#create-pvc][Create pvc]]
+  - [[#create-pvc][Create PVC]]
   - [[#deploy-registry][Deploy Registry]]
   - [[#create-service][Create Service]]
   - [[#delete-deployment][Delete deployment]]
   - [[#delete-namespace][Delete namespace]]
 :END:
 * General
+The purpose of this set of playbooks is to install and uninstall a docker-registry on a kubernetes cluster with a dedicated storage space and externally accessible IP address to allow for outside clients the ability to push new docker images into the cluster and be available for deployments.
+
+** Requirements and Prerequisites
+The playbook assumes that the inventory list of hosts provided is a controller node within a kubernetes cluster. Additionally the deployment will utilize the following other cluster deployments, specifically longhorn for storage allocation and cert-manager to provide a valid TLS certificate for the docker registry to use. See the [[file:~/projects/literate-playbooks/provision-longhorn/README.org][longhorn literate playbook]] and the [[file:~/projects/literate-playbooks/provision-cert-manager/README.org][Cert-Manager literate playbook]] for details on the setup and installation of those resources.
+
+** Usage
+The playbooks can be invoked on the commandline using the normal ansible-playbook call.
+
+#+begin_src sh
+ansible-playbook -i inventory/hosts provision-docker-registry.yml
+#+end_src
+
+Additionally, a makefile is available that will both re-tangle this file with any edits and can be run using the make command.
+
+#+begin_src sh
+make provision
+#+end_src
+
 * Inventory
+The expected inventory for this playbook is a single controller for a kubernetes cluster.
+
 #+begin_src init :tangle inventory/hosts.ini
 [controllers]
 boreas
 #+end_src
 
 * Group Variables
+Key group variables to note for this playbook are the following:
+
+- docker_reg_service_ip - The IP address that the service will be running on, adjust as needed for your network configuration
+- docker_reg_pvc_size: This is the size of the volume that the registry will claim and use for storage for the docker container images. Adjust up or down as needed
+- docker_reg_replicas: - number of containers that will be created as part of the deployment. Because this will be primarily used on my private cluster there isn't that big of a need to have multiple registries available to respond to the likely few requests that it will need to respond to so I have set this to 1. Adjust up as needed.
+- cert-manager-issuer:  the selector name of the issuer (or cluster issuer) that will provide the registry with a certificate for encrypting https traffic. This will need to match an existing issuer in the cluster.
+
+The remaining variables are primarily for consistent naming and do not have any external or internal requirements.The container port listening on port 5000 is standard for docker registries.
+
 #+begin_src yaml :tangle group_vars/all
 docker_reg_label: docker-registry
-docker_reg_cert_name: registry-cert
 docker_reg_namespace: docker-registry
 docker_reg_pvc_name: docker-registry-pvc
 docker_reg_pvc_size: 5Gi
 docker_reg_replicas: 1
 docker_reg_container_port: 5000
-docker_reg_tls_crt: ~/certs/olympus/olympus.docker-registry.crt
-docker_reg_tls_key: ~/certs/olympus/olympus-root.key
 docker_reg_service_name: docker-registry-service
 docker_reg_service_ip: 172.17.1.62
 cert_manager_issuer: cert-manager-issuer
 #+end_src
 
 * Playbook Definition
+
+** Provision
+
+To install the registry the playbook has been broken up into 5 discrete parts. They are
+
+- Creating the namespace for the registry
+- Getting a new certificate from the certificate issuer for the namespace
+- Create a persistent volume claim from longhorn for the container images
+- Add the deployment to the cluster
+- Add a service for the deployment listening on the IP address listed in the group_vars
 
 #+begin_src yaml :tangle provision-docker-registry.yml
 - name: Install docker registry on the cluster
@@ -55,8 +95,19 @@ cert_manager_issuer: cert-manager-issuer
     - role: create-service
 #+end_src
 
+** Unprovision
+
+Destroying the docker-registry on the cluster is comparatively simpler than deploying it. Needing only two steps:
+
+- Delete the docker-registry deployment
+- Delete the namespace
+
+  Deleting the namespace will delete non-pod resources like secrets, certificates and services.
+
 * Roles
 ** Create Namespace
+
+Start by creating the namespace for the docker registry. All other cluster actions are performed within this new namespace.
 
 #+begin_src yaml :tangle roles/create-namespace/tasks/main.yml
 - name: Create a docker registry namespace
@@ -68,6 +119,12 @@ cert_manager_issuer: cert-manager-issuer
 #+end_src
 
 ** Create Certificate
+Request a new certificate from the Issuer or ClusterIssuer depending on how your cluster is set up. In this playbook I am using a ClusterIssuer to keep things simple.
+
+A few notes on the certificate template found during getting the certificate setup properly.
+
+The values found in dnsNames and ipAddresses are what will be added to the certificate as Alt Subject Names, ie: a list of address this certificate can be accessed from. Specifically if you add the ip address of the service to the dnsNames, you will get very confusing error messages when accessing by IP address about the address not being in a list of address that it should be.
+
 #+begin_src yaml :tangle roles/create-certificate/templates/docker-registry-cert.yml
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -87,13 +144,17 @@ spec:
     kind: ClusterIssuer
 #+end_src
 
+Request the certificate by running the template against the cluster.
+
 #+begin_src yaml :tangle roles/create-certificate/tasks/main.yml
 - name: Create docker-registry certificate
   k8s:
     definition: "{{ lookup('template', 'templates/docker-registry-cert.yml') }}"
 #+end_src
 
-** Create pvc
+** Create PVC
+
+Request the PVC from longhorn before deploying the cluster with the size defined in the group vars.
 
 #+begin_src yaml :tangle roles/create-pvc/templates/create-pvc.yml
 apiVersion: v1
@@ -117,6 +178,8 @@ spec:
 #+end_src
 
 ** Deploy Registry
+
+To make sure that the registry serves the correct certificate, it will pass the tls certificate (tls.crt) and the key (tls.key) as environment variables for the containers. The certificates are defined in a secret that is create when the certificate is issued. The two values can be referenced using the `/certs' directory when the secret is mounted.
 
 #+begin_src yaml :tangle roles/deploy-registry/templates/deploy-registry.yml
 apiVersion: apps/v1
@@ -144,11 +207,6 @@ spec:
         image: registry:2
         ports:
         - containerPort: {{ docker_reg_container_port }}
-        env:
-        - name: REGISTRY_HTTP_TLS_CERTIFICATE
-          value: "/certs/tls.crt"
-        - name: REGISTRY_HTTP_TLS_KEY
-          value: "/certs/tls.key"
         volumeMounts:
         - name: docker-registry-secret
           mountPath: "/certs"
@@ -156,6 +214,11 @@ spec:
         - name: registry-data
           mountPath: /var/lib/registry
           subPath: registry
+        env:
+        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+          value: "/certs/tls.crt"
+        - name: REGISTRY_HTTP_TLS_KEY
+          value: "/certs/tls.key"
       volumes:
       - name: docker-registry-secret
         secret:
