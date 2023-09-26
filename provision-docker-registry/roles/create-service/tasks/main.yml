@@ -1,0 +1,3 @@
+- name: Deploy the registry service
+  k8s:
+    definition: "{{ lookup('template', 'templates/registry-service.yml') | from_yaml }}"

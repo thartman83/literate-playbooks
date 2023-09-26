@@ -1,0 +1,8 @@
+- name: Install docker registry on the cluster
+  hosts: controllers
+  roles:
+    - role: create-namespace
+    - role: create-certificate
+    - role: create-pvc
+    - role: deploy-registry
+    - role: create-service

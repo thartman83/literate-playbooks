@@ -1,0 +1,201 @@
+#+TITLE: Provision Docker Registry
+#+AUTHOR: Tom Hartman
+#+STARTUP: overview
+* Table of Contents
+:PROPERTIES:
+:TOC:      :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+- [[#inventory][Inventory]]
+- [[#group-variables][Group Variables]]
+- [[#playbook-definition][Playbook Definition]]
+- [[#roles][Roles]]
+  - [[#create-namespace][Create Namespace]]
+  - [[#create-certificate][Create Certificate]]
+  - [[#create-pvc][Create pvc]]
+  - [[#deploy-registry][Deploy Registry]]
+  - [[#create-service][Create Service]]
+  - [[#delete-deployment][Delete deployment]]
+  - [[#delete-namespace][Delete namespace]]
+:END:
+* General
+* Inventory
+#+begin_src init :tangle inventory/hosts.ini
+[controllers]
+boreas
+#+end_src
+
+* Group Variables
+#+begin_src yaml :tangle group_vars/all
+docker_reg_label: docker-registry
+docker_reg_cert_name: registry-cert
+docker_reg_namespace: docker-registry
+docker_reg_pvc_name: docker-registry-pvc
+docker_reg_pvc_size: 5Gi
+docker_reg_replicas: 1
+docker_reg_container_port: 5000
+docker_reg_tls_crt: ~/certs/olympus/olympus.docker-registry.crt
+docker_reg_tls_key: ~/certs/olympus/olympus-root.key
+docker_reg_service_name: docker-registry-service
+docker_reg_service_ip: 172.17.1.62
+cert_manager_issuer: cert-manager-issuer
+#+end_src
+
+* Playbook Definition
+
+#+begin_src yaml :tangle provision-docker-registry.yml
+- name: Install docker registry on the cluster
+  hosts: controllers
+  roles:
+    - role: create-namespace
+    - role: create-certificate
+    - role: create-pvc
+    - role: deploy-registry
+    - role: create-service
+#+end_src
+
+* Roles
+** Create Namespace
+
+#+begin_src yaml :tangle roles/create-namespace/tasks/main.yml
+- name: Create a docker registry namespace
+  kubernetes.core.k8s:
+    name: "{{ docker_reg_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+#+end_src
+
+** Create Certificate
+#+begin_src yaml :tangle roles/create-certificate/templates/docker-registry-cert.yml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ docker_reg_namespace }}-certificate
+  namespace: {{ docker_reg_namespace }}
+spec:
+  secretName: {{ docker_reg_namespace }}-secret
+  commonName: {{ docker_reg_service_ip }}
+  dnsNames:
+    - "*.{{ docker_reg_namespace }}.svc.cluster.local"
+    - "*.{{ docker_reg_namespace }}"
+  ipAddresses:
+    - "{{ docker_reg_service_ip }}"
+  issuerRef:
+    name: {{ cert_manager_issuer }}
+    kind: ClusterIssuer
+#+end_src
+
+#+begin_src yaml :tangle roles/create-certificate/tasks/main.yml
+- name: Create docker-registry certificate
+  k8s:
+    definition: "{{ lookup('template', 'templates/docker-registry-cert.yml') }}"
+#+end_src
+
+** Create pvc
+
+#+begin_src yaml :tangle roles/create-pvc/templates/create-pvc.yml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ docker_reg_pvc_name }}
+  namespace: {{ docker_reg_namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: {{ docker_reg_pvc_size }}
+#+end_src
+
+#+begin_src yaml :tangle roles/create-pvc/tasks/main.yml
+- name: Create persistent volume for the registry
+  k8s:
+    definition: "{{ lookup('template', 'templates/create-pvc.yml') | from_yaml }}"
+#+end_src
+
+** Deploy Registry
+
+#+begin_src yaml :tangle roles/deploy-registry/templates/deploy-registry.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: {{ docker_reg_label }}
+  name: {{ docker_reg_label }}
+  namespace: {{ docker_reg_namespace }}
+spec:
+  replicas: {{ docker_reg_replicas }}
+  selector:
+    matchLabels:
+      run: {{ docker_reg_label }}
+  template:
+    metadata:
+      labels:
+        run: {{ docker_reg_label }}
+        app: {{ docker_reg_label }}
+    spec:
+      nodeSelector:
+        node-type: worker
+      containers:
+      - name: {{ docker_reg_label }}
+        image: registry:2
+        ports:
+        - containerPort: {{ docker_reg_container_port }}
+        env:
+        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+          value: "/certs/tls.crt"
+        - name: REGISTRY_HTTP_TLS_KEY
+          value: "/certs/tls.key"
+        volumeMounts:
+        - name: docker-registry-secret
+          mountPath: "/certs"
+          readOnly: true
+        - name: registry-data
+          mountPath: /var/lib/registry
+          subPath: registry
+      volumes:
+      - name: docker-registry-secret
+        secret:
+          secretName: docker-registry-secret
+      - name: registry-data
+        persistentVolumeClaim:
+          claimName: {{ docker_reg_pvc_name }}
+#+end_src
+
+#+begin_src yaml :tangle roles/deploy-registry/tasks/main.yml
+- name: Deploy the registry
+  k8s:
+    definition: "{{ lookup('template', 'templates/deploy-registry.yml') }}"
+#+end_src
+
+** Create Service
+#+begin_src yaml :tangle :tangle roles/create-service/templates/registry-service.yml
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ docker_reg_service_name }}
+  namespace: {{ docker_reg_namespace }}
+  annotations:
+    metallb.universe.tf/address-pool: default-pool
+spec:
+  selector:
+    app: {{ docker_reg_label }}
+  ports:
+  - port: 5000
+    targetPort: 5000
+  type: LoadBalancer
+  loadBalancerIP: {{ docker_reg_service_ip }}
+#+end_src
+
+#+begin_src yaml :tangle roles/create-service/tasks/main.yml
+- name: Deploy the registry service
+  k8s:
+    definition: "{{ lookup('template', 'templates/registry-service.yml') | from_yaml }}"
+#+end_src
+
+** Delete deployment
+
+** Delete namespace

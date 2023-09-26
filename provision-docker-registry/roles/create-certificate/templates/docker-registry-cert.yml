@@ -1,0 +1,16 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ docker_reg_namespace }}-certificate
+  namespace: {{ docker_reg_namespace }}
+spec:
+  secretName: {{ docker_reg_namespace }}-secret
+  commonName: 172.17.1.62
+  dnsNames:
+    - "*.{{ docker_reg_namespace }}.svc.cluster.local"
+    - "*.{{ docker_reg_namespace }}"
+  ipAddresses:
+    - "172.17.1.62"
+  issuerRef:
+    name: cert-manager-issuer
+    kind: ClusterIssuer
