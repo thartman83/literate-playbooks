@@ -16,26 +16,3 @@ helm_gpgkey: "672C 657B E06B 4B30 969C 4A57 4614 49C2 5E36 B98E"
 metallb_helm_repourl: https://metallb.github.io/metallb
 metallb_namespace: metallb-system
 metallb_iprange: 172.17.1.60-172.17.1.69
-
-longhorn_storage_dir: /storage
-longhorn_helm_repourl: https://charts.longhorn.io
-longhorn_namespace: longhorn-system
-longhorn_loadbalancer_ip: 172.17.1.61
-
-cert_manager_repourl: https://charts.jetstack.io
-cert_manager_loadbalancer_ip: 172.17.1.63
-cert_manager_namespace: cert-manager
-cert_manager_version: v1.13.0
-
-docker_reg_label: docker-registry
-docker_reg_cert_localpath: ~/cert
-docker_reg_cert_name: registry-cert
-docker_reg_namespace: docker-registry
-docker_reg_pvc_name: docker-registry-pvc
-docker_reg_pvc_size: 5Gi
-docker_reg_replicas: 1
-docker_reg_container_port: 5000
-docker_reg_tls_crt: ~/certs/olympus/olympus.docker-registry.crt
-docker_reg_tls_key: ~/certs/olympus/olympus-root.key
-docker_reg_service_name: docker-registry-service
-docker_reg_service_ip: 172.17.1.62

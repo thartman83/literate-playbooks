@@ -1,8 +1,8 @@
 ANSIBLE= ansible-playbook
 HOSTS=inventory/hosts.ini
-CHECK=
+EMACS=emacs
 
-.PHONY: provision k3s-controller k3s-workers helm loadbalancer longhorn cert-manager docker-registry tangle
+.PHONY: provision k3s-controller k3s-workers helm loadbalancer tangle
 
 tangle: README.org
 	emacs $< --batch --eval '(org-babel-tangle-file "README.org")'
@@ -10,26 +10,20 @@ tangle: README.org
 provision: tangle
 	${ANSIBLE} -i ${HOSTS} provision-k3s.yml
 
+check: tangle
+  ${ANSIBLE} -i ${HOSTS} provision-k3s.yml --check
+
 k3s-controller: tangle
-	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-controller" ${CHECK}
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-controller"
 
 k3s-workers: tangle
-	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-workers" ${CHECK}
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-workers"
 
 helm: tangle
-	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "helm" ${CHECK}
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "helm"
 
 loadbalancer: tangle
-	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "loadbalancer" ${CHECK}
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "loadbalancer"
 
-longhorn: tangle
-	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "longhorn" ${CHECK}
-
-cert-manager: tangle
-	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "cert-manager" ${CHECK}
-
-docker-registry: tangle
-	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "docker-registry" ${CHECK}
-
-clean:
-	${ANSIBLE} -i ${HOSTS} clean.yml
+unprovision: tangle
+	${ANSIBLE} -i ${HOSTS} unprovision-k3s.yml

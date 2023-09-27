@@ -8,17 +8,66 @@
 :END:
 :CONTENTS:
 - [[#general][General]]
+  - [[#prerequisites][Prerequisites]]
+- [[#makefile][Makefile]]
 - [[#inventory][Inventory]]
-- [[#host-variables][Host Variables]]
-- [[#playbook-definitions][Playbook Definitions]]
-  - [[#roles][Roles]]
-    - [[#setup-k3s-on-controller][Setup k3s on controller]]
+- [[#group-variables][Group Variables]]
+- [[#playbook-definition][Playbook Definition]]
+- [[#roles][Roles]]
+  - [[#setup-k3s-on-controller][Setup k3s on controller]]
+  - [[#setup-k3s-on-the-worker][Setup k3s on the worker]]
+  - [[#let-workers-be-workers][Let workers be workers]]
+  - [[#controller-helm][Controller Helm]]
+  - [[#load-balancer][Load Balancer]]
 :END:
 
 * General
-Provision a new k3s cluster on listed hosts
+The purpose of this playbook is to setup a barebones kubernetes cluster on a set of target hosts using k3s. In addition to installing and configuring the cluster, this playbook will also install helm on the cluster controller node as well as install the loadbalancer Metallb on the cluster available for use for other deployments.
+
+** Prerequisites
+This playbook expects to have the three inventory groups available:
+
+- controllers: sometimes referred to as a 'master' node, instead throughout this playbook I will be referring to them as the controllers
+- workers: workers are nodes within the cluster that aren't the controllers
+- nodes: the list of all hosts that will be nodes within the cluster
+
+* Makefile
+The makefile for this playbook has multiple targets each targeting a specific play within the playbook by specifying tags. This was mostly useful when debugging the playbook but still could be useful in certain situations.
+
+#+begin_src makefile :tangle Makefile
+ANSIBLE= ansible-playbook
+HOSTS=inventory/hosts.ini
+EMACS=emacs
+
+.PHONY: provision k3s-controller k3s-workers helm loadbalancer tangle
+
+tangle: README.org
+	emacs $< --batch --eval '(org-babel-tangle-file "README.org")'
+
+provision: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml
+
+check: tangle
+  ${ANSIBLE} -i ${HOSTS} provision-k3s.yml --check
+
+k3s-controller: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-controller"
+
+k3s-workers: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-workers"
+
+helm: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "helm"
+
+loadbalancer: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "loadbalancer"
+
+unprovision: tangle
+	${ANSIBLE} -i ${HOSTS} unprovision-k3s.yml
+#+end_src
 
 * Inventory
+Three inventory groups are defined and expected throughout this playbook, controllers, workers, and nodes. Because this a fairly simple cluster the is no HA and it uses a single controller with 3 other worker nodes.
 
 #+begin_src ini :tangle inventory/hosts.ini
 [controller]
@@ -37,6 +86,14 @@ zephyrus
 #+end_src
 
 * Group Variables
+Group variables to note are the following:
+
+- k3spasswd: this is the password that k3s will be using for setting up the cluster, obviously this isn't secure so change this and keep this secret
+- net_prefix: this is the network prefix that the nodes are on and will be used to determine what the ip address is of the controller node
+- k3s_primary_controller: the DNS name of the controller (should match the inventory file) that will be used by the other nodes to install k3s from the controller
+- k3s_nodes: the list of nodes, this should be the same as the values in the inventory file
+- metallb_iprange: the range of ip address that metallb is able to use for other services when they request service on specific ip address. These should be only available to metallb and shouldn't be in a range that your networks dhcp server may issue to other clients.
+
 #+begin_src yaml :tangle group_vars/all
 k3spasswd: k3spasswd
 net_prefix: 172.17.1.
@@ -56,34 +113,17 @@ helm_gpgkey: "672C 657B E06B 4B30 969C 4A57 4614 49C2 5E36 B98E"
 metallb_helm_repourl: https://metallb.github.io/metallb
 metallb_namespace: metallb-system
 metallb_iprange: 172.17.1.60-172.17.1.69
-
-longhorn_storage_dir: /storage
-longhorn_helm_repourl: https://charts.longhorn.io
-longhorn_namespace: longhorn-system
-longhorn_loadbalancer_ip: 172.17.1.61
-
-cert_manager_repourl: https://charts.jetstack.io
-cert_manager_loadbalancer_ip: 172.17.1.63
-cert_manager_namespace: cert-manager
-cert_manager_version: v1.13.0
-
-docker_reg_label: docker-registry
-docker_reg_cert_localpath: ~/cert
-docker_reg_cert_name: registry-cert
-docker_reg_namespace: docker-registry
-docker_reg_pvc_name: docker-registry-pvc
-docker_reg_pvc_size: 5Gi
-docker_reg_replicas: 1
-docker_reg_container_port: 5000
-docker_reg_tls_crt: ~/certs/olympus/olympus.docker-registry.crt
-docker_reg_tls_key: ~/certs/olympus/olympus-root.key
-docker_reg_service_name: docker-registry-service
-docker_reg_service_ip: 172.17.1.62
 #+end_src
 
-* Host Variables
-
 * Playbook Definition
+
+Because different roles will need to be applied to different sets of hosts in different order this playbook is broken down into different plays. They are in order:
+
+- Install k3s onto the controller node
+- Install k3s on the worker nodes from the controller
+- From the controller node, mark the other nodes as workers
+- Install Helm on the controller node
+- Install the Metallb loadbalancer via helm into the cluster
 
 #+begin_src yaml :tangle provision-k3s.yml
 ---
@@ -118,40 +158,9 @@ docker_reg_service_ip: 172.17.1.62
   roles:
     - role: k3s-loadbalancer
   tags: loadbalancer
-
-- name: Provision longhorn storage on all works
-  hosts: nodes
-  roles:
-    - role: k3s-storage-common
-  tags:
-    - longhorn-common
-    - longhorn
-
-- name: Provision longhorn controller
-  hosts: controller
-  roles:
-    - role: k3s-storage-controller
-  tags:
-    - longhorn-controller
-    - longhorn
-
-- name: Cert Manager
-  hosts: controller
-  roles:
-    - role: k3s-cert-manager
-  tags:
-    - cert-manager
-
-- name: Docker registry
-  hosts: controller
-  roles:
-    - role: k3s-docker-registry
-  tags:
-    - docker-registry
 #+end_src
 
 * Roles
-
 ** Setup k3s on controller
 
 First step is to install k3s on the controllers. First we check to see if the controller already has k3s installed. Running which seems to be the simplest way to check this though I wish there was a built in command to accomplish this rather than having to do stuff like ignoring errors and returning an rc value.
@@ -232,18 +241,18 @@ In order to run k8s ansible tasks the controller will need the following additio
 ** Setup k3s on the worker
 Now we need to install k3s on each of the workers from the controller if it is not already present
 
+First check to see if k3s already exists on the node.
 #+begin_src yaml :tangle roles/k3s-worker/tasks/main.yml
 - name: Check if k3s is already installed on the worker
-  tags: k3s-workers
   command: which k3s
   register: which_k3s
   ignore_errors: True
   changed_when: "which_k3s.rc == 1"
 #+end_src
 
+If it isn't installed install it from the controller node via curl. Curling into sh isn't the greatest way of installing things (read potentially dangerous) but for the moment this is the simplest way.
 #+begin_src yaml :tangle roles/k3s-worker/tasks/main.yml
 - name: Provision the controller nodes
-  tags: k3s-workers
   shell:
     cmd: |-
       curl -sfL https://get.k3s.io | K3S_URL=https://{{ k3s_primary_controller }}:6443 K3S_TOKEN={{ k3spasswd }} sh -
@@ -259,16 +268,16 @@ Now we need to install k3s on each of the workers from the controller if it is n
 
 We now need to use the controller to mark all of the nodes as viable workers.
 
+Both these commands should probably be replaced with the k8s module instead of running raw commands.
+
 #+begin_src yaml :tangle roles/k3s-worker-roles/tasks/main.yml
 - name: Add worker node type for all nodes
-  tags: k3s-workers
   command: kubectl label node {{ item }} kubernetes.io/role=worker
   loop: "{{ k3s_nodes }}"
 #+end_src
 
 #+begin_src yaml :tangle roles/k3s-worker-roles/tasks/main.yml
 - name: Add worker node type for all nodes
-  tags: k3s-workers
   command: kubectl label node {{ item }} node-type=worker
   loop: "{{ k3s_nodes }}"
 #+end_src
@@ -346,14 +355,18 @@ Download the helm package and verify. Then move the executable into /usr/local/b
 
 Add metal load balancer to the cluster.
 
-Add the repository url
+Add the repository url for metallb into helm.
 
 #+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
 - name: Add helm metallb chart repository
   kubernetes.core.helm_repository:
     name: metallb
     repo_url: "{{ metallb_helm_repourl }}"
+#+end_src
 
+Deploy the chart via helm. The deployment can take a while and because we will need it in future steps we will wait for it to complete.
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
 - name: Deploy metal loadbalancer to the cluster
   kubernetes.core.helm:
     name: metallb
@@ -363,6 +376,8 @@ Add the repository url
     wait: True
     update_repo_cache: True
 #+end_src
+
+With the chart deployed we need to create an IP Address pool resource that represents the list of ip address available for metallb to allocate as services.
 
 #+begin_src yaml :tangle roles/k3s-loadbalancer/templates/metallb-ippool.yml
 apiVersion: metallb.io/v1beta1
@@ -374,6 +389,14 @@ spec:
   addresses:
   - {{ metallb_iprange }}
 #+end_src
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
+- name: Apply metallb ip address pool configuration
+  k8s:
+    definition: "{{ lookup('template','templates/metallb-ippool.yml') | from_yaml }}"
+#+end_src
+
+Deploy the L2 Advertisement resource. This will respond internally and external to ARP requests for any services that are created.
 
 #+begin_src yaml :tangle roles/k3s-loadbalancer/templates/metallb-l2advertisement.yml
 apiVersion: metallb.io/v1beta1
@@ -387,283 +410,7 @@ spec:
 #+end_src
 
 #+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
-- name: Apply metallb ip address pool configuration
-  k8s:
-    definition: "{{ lookup('template','templates/metallb-ippool.yml') | from_yaml }}"
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
 - name: Apply metallb L2 Advertisement
   k8s:
     definition: "{{ lookup('template', 'templates/metallb-l2advertisement.yml') | from_yaml }}"
-#+end_src
-
-** Longhorn
-For all nodes in the cluster prepare the storage location and install packages that longhorn will need for provisioning storage across the nodes.
-
-#+begin_src yaml :tangle roles/k3s-storage-common/tasks/main.yml
-- name: Create the storage directory if it does not exist
-  ansible.builtin.file:
-    path: "{{ longhorn_storage_dir }}"
-    state: directory
-
-- name: Install common nfs prereqs on all nodes
-  package:
-    name:
-      - nfs-common
-      - open-iscsi
-      - util-linux
-    state: present
-#+end_src
-
-#+begin_src sh
-helm install longhorn longhorn/longhorn --namespace longhorn-system --create-namespace --set defaultSettings.defaultDataPath="/storage" --set service.ui.loadBalancerIP="10.0.0.71" --set service.ui.type="LoadBalancer"
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-storage-controller/tasks/main.yml
-- name: Install Longhorn IO prereqs on all nodes
-  apt:
-    pkg:
-      - python3-pip
-    state: present
-
-- name: Install PyYAML python package
-  ansible.builtin.pip:
-    name: PyYAML
-
-- name: Add longhorn repository to the controller
-  kubernetes.core.helm_repository:
-    name: longhorn
-    repo_url: "{{ longhorn_helm_repourl }}"
-
-- name: Install longhorn via helm
-  kubernetes.core.helm:
-   name: longhorn
-   chart_ref: longhorn/longhorn
-   release_namespace: "{{ longhorn_namespace }}"
-   create_namespace: true
-   update_repo_cache: True
-   set_values:
-     - value: service.ui.loadBalancerIP="{{ longhorn_loadbalancer_ip }}"
-       value_type: string
-     - value: service.ui.type=LoadBalancer
-       value_type: string
-     - value: defaultSettings.defaultDataPath="{{ longhorn_storage_dir }}"
-       value_type: string
-
-#+end_src
-
-** Cert-Manager
-#+begin_src yaml :tangle roles/k3s-cert-manager/tasks/main.yml
-- name: Add jetstack repository to the controller
-  kubernetes.core.helm_repository:
-    name: jetstack
-    repo_url: "{{ cert_manager_repourl }}"
-
-- name: Install cert-manager via helm
-  kubernetes.core.helm:
-   name: cert-manager
-   chart_ref: jetstack/cert-manager
-   release_namespace: "{{ cert_manager_namespace }}"
-   create_namespace: true
-   update_repo_cache: True
-   set_values:
-     - value: installCRDs=true
-       value_type: string
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-cert-manager/templates/cert-manager-issuer.yml
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: {{ cert_manager_namespace }}-issuer
-  namespace: {{ cert_manager_namespace }}
-spec:
-  selfSigned: {}
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ cert_manager_namespace }}-ca
-  namespace: {{ cert_manager_namespace }}
-spec:
-  isCA: true
-  commonName: {{ cert_manager_namespace }}-ca
-  secretName: ca-secret
-  privateKey:
-    algorithm: ECDSA
-    size: 256
-  issuerRef:
-    name: {{ cert_manager_namespace }}-issuer
-    kind: ClusterIssuer
-    group: cert-manager.io
----
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: ca-issuer
-spec:
-  ca:
-    secretName: ca-secret
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-cert-manager/tasks/main.yml
-- name: Create the issuer for cert-manager
-  k8s:
-    definition: "{{ lookup('template', 'templates/cert-manager-issuer.yml') }}"
-
-#+end_src
-
-** Docker Registry
-
-Create the docker registry namespace
-#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
-- name: Create a docker registry namespace
-  kubernetes.core.k8s:
-    name: "{{ docker_reg_namespace }}"
-    api_version: v1
-    kind: Namespace
-    state: present
-#+end_src
-
-#+begin_src yml :tangle roles/k3s-docker-registry/templates/docker-registry-cert.yml
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: {{ docker_reg_namespace }}-certificate
-  namespace: {{ docker_reg_namespace }}
-spec:
-  secretName: {{ docker_reg_namespace }}-secret
-  dnsNames:
-  - "*.{{ docker_reg_namespace }}.svc.cluster.local"
-  - "*.{{ docker_reg_namespace }}"
-  issuerRef:
-    name: ca-issuer
-    kind: ClusterIssuer
-#    group: cert-manager.io/v1
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
-- name: Create the issuer for cert-manager
-  k8s:
-    definition: "{{ lookup('template', 'templates/docker-registry-cert.yml') }}"
-
-#+end_src
-
-Create a persistent volume for the registry
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/templates/registry-pvc.yml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ docker_reg_pvc_name }}
-  namespace: {{ docker_reg_namespace }}
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: {{ docker_reg_pvc_size }}
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
-- name: Create persistent volume for the registry
-  k8s:
-    definition: "{{ lookup('template', 'templates/registry-pvc.yml') | from_yaml }}"
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/templates/cert-secrets.yml
-apiVersion: v1
-data:
-  tls.crt: {{ lookup('file', docker_reg_tls_crt ) | b64encode }}
-  tls.key: {{ lookup('file', docker_reg_tls_key ) | b64encode }}
-kind: Secret
-metadata:
-  name: {{ docker_reg_cert_name }}
-  namespace: {{ docker_reg_namespace }}
-type: kubernetes.io/tls
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
-- name: Add secrets
-  k8s:
-    definition: "{{ lookup('template', 'templates/cert-secrets.yml') | from_yaml }}"
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/templates/registry-deployment.yml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  labels:
-    run: {{ docker_reg_label }}
-  name: {{ docker_reg_label }}
-  namespace: {{ docker_reg_namespace }}
-spec:
-  replicas: {{ docker_reg_replicas }}
-  selector:
-    matchLabels:
-      run: {{ docker_reg_label }}
-  template:
-    metadata:
-      labels:
-        run: {{ docker_reg_label }}
-        app: {{ docker_reg_label }}
-    spec:
-      nodeSelector:
-        node-type: worker
-      containers:
-      - name: {{ docker_reg_label }}
-        image: registry:2
-        ports:
-        - containerPort: {{ docker_reg_container_port }}
-        env:
-        - name: REGISTRY_HTTP_TLS_CERTIFICATE
-          value: "/certs/tls.crt"
-        - name: REGISTRY_HTTP_TLS_KEY
-          value: "/certs/tls.key"
-        volumeMounts:
-        - name: docker-registry-secret
-          mountPath: "/certs"
-          readOnly: true
-        - name: registry-data
-          mountPath: /var/lib/registry
-          subPath: registry
-      volumes:
-      - name: docker-registry-secret
-        secret:
-          secretName: docker-registry-secret
-      - name: registry-data
-        persistentVolumeClaim:
-          claimName: {{ docker_reg_pvc_name }}
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
-- name: Deploy the registry to the cluster
-  k8s:
-    definition: "{{ lookup('template', 'templates/registry-deployment.yml') | from_yaml }}"
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/templates/registry-service.yml
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ docker_reg_service_name }}
-  namespace: {{ docker_reg_namespace }}
-  annotations:
-    metallb.universe.tf/address-pool: default-pool
-spec:
-  selector:
-    app: {{ docker_reg_label }}
-  ports:
-  - port: 5000
-    targetPort: 5000
-  type: LoadBalancer
-  loadBalancerIP: {{ docker_reg_service_ip }}
-#+end_src
-
-#+begin_src yaml :tangle roles/k3s-docker-registry/tasks/main.yml
-- name: Deploy the registry service
-  k8s:
-    definition: "{{ lookup('template', 'templates/registry-service.yml') | from_yaml }}"
 #+end_src
