@@ -1,8 +1,0 @@
-ANSIBLE= ansible-playbook
-HOSTS= inventory/hosts.ini
-
-provision:
-	${ANSIBLE} -i ${HOSTS} provision-cert-manager.yml
-
-unprovision:
-	${ANSIBLE} -i ${HOSTS} unprovision-cert-manager.yml
