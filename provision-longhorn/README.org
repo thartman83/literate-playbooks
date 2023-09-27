@@ -1,0 +1,116 @@
+-*- mode: org; mode: org-make-toc-mode -*-
+#+TITLE: Provision Longhorn
+#+AUTHOR: Tom Hartman
+#+STARTUP: overview
+
+* Table of Contents
+:PROPERTIES:
+:TOC: :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+- [[#makefile][Makefile]]
+- [[#inventory][Inventory]]
+- [[#group-vars][Group Vars]]
+- [[#playbooks][Playbooks]]
+- [[#roles][Roles]]
+  - [[#common-packages][Common packages]]
+  - [[#longhorn-deployment][Longhorn deployment]]
+:END:
+
+* General
+
+
+* Makefile
+
+#+begin_src makefile :tangle Makefile
+
+#+end_src
+
+* Inventory
+
+* Group Vars
+#+begin_src yaml :tangle group_vars/all
+longhorn_storage_dir: /storage
+longhorn_helm_repourl: https://charts.longhorn.io
+longhorn_namespace: longhorn-system
+longhorn_loadbalancer_ip: 172.17.1.61
+#+end_src
+
+* Playbooks
+#+begin_src yaml :tangle provision-longhorn.yml
+- name: Provision longhorn storage on all works
+  hosts: nodes
+  roles:
+    - role: k3s-storage-common
+  tags:
+    - longhorn-common
+    - longhorn
+
+- name: Provision longhorn controller
+  hosts: controller
+  roles:
+    - role: k3s-storage-controller
+  tags:
+    - longhorn-controller
+    - longhorn
+#+end_src
+
+* Roles
+
+** Common packages
+For all nodes in the cluster prepare the storage location and install packages that longhorn will need for provisioning storage across the nodes.
+
+#+begin_src yaml :tangle roles/k3s-storage-common/tasks/main.yml
+- name: Create the storage directory if it does not exist
+  ansible.builtin.file:
+    path: "{{ longhorn_storage_dir }}"
+    state: directory
+
+- name: Install common nfs prereqs on all nodes
+  package:
+    name:
+      - nfs-common
+      - open-iscsi
+      - util-linux
+    state: present
+#+end_src
+
+** Longhorn deployment
+
+#+begin_src sh
+helm install longhorn longhorn/longhorn --namespace longhorn-system --create-namespace --set defaultSettings.defaultDataPath="/storage" --set service.ui.loadBalancerIP="172.17.1.61" --set service.ui.type="LoadBalancer"
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-storage-controller/tasks/main.yml
+- name: Install Longhorn IO prereqs on all nodes
+  apt:
+    pkg:
+      - python3-pip
+    state: present
+
+- name: Install PyYAML python package
+  ansible.builtin.pip:
+    name: PyYAML
+
+- name: Add longhorn repository to the controller
+  kubernetes.core.helm_repository:
+    name: longhorn
+    repo_url: "{{ longhorn_helm_repourl }}"
+
+- name: Install longhorn via helm
+  kubernetes.core.helm:
+   name: longhorn
+   chart_ref: longhorn/longhorn
+   release_namespace: "{{ longhorn_namespace }}"
+   create_namespace: true
+   update_repo_cache: True
+   set_values:
+     - value: service.ui.loadBalancerIP="{{ longhorn_loadbalancer_ip }}"
+       value_type: string
+     - value: service.ui.type=LoadBalancer
+       value_type: string
+     - value: defaultSettings.defaultDataPath="{{ longhorn_storage_dir }}"
+       value_type: string
+
+#+end_src
