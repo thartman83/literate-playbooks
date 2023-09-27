@@ -10,13 +10,14 @@
 :END:
 :CONTENTS:
 - [[#general][General]]
+  - [[#prerequisites][Prerequisites]]
+- [[#makefile][Makefile]]
 - [[#inventory][Inventory]]
 - [[#group-variables][Group Variables]]
 - [[#playbook-definition][Playbook Definition]]
   - [[#provision][Provision]]
   - [[#unprovision][Unprovision]]
 - [[#roles][Roles]]
-  - [[#helm-prerequisites][Helm Prerequisites]]
   - [[#create-cert-manager-namespace][Create Cert Manager namespace]]
   - [[#add-ca-secret][Add CA Secret]]
   - [[#install-cert-manager][Install Cert-Manager]]
@@ -25,6 +26,31 @@
   - [[#delete-cert-manager-namespace][Delete cert-manager namespace]]
 :END:
 * General
+The purpose of this playbook is to setup a cert-manager on the cluster that can be use by other deployments to create certificates that are signed by an existing certificate. This will import the certificate into the cluster, deploy cert-manager via helm and create ClusterIssuer that can be used across the cluster namespaces that can be used to issue certificates for other applications.
+
+** Prerequisites
+This playbook expects that the controllers inventory group points at a valid kubernetes cluster controller node. Additionally, it requires a certificate and server key to be available on the host machine to use as its Certificate Authority. These can be generated in a number of ways and is outside the scope of this playbook. This playbook will target the certificate and associated key file on the machine running the playbook in the ~/cert directory as defined in the group variables section.
+
+* Makefile
+Define a simple make file that will retangle the readme and rules for running the two playbooks
+
+#+begin_src Makefile :tangle Makefile
+ANSIBLE= ansible-playbook
+HOSTS= inventory/hosts.ini
+EMACS=emacs
+
+.PHONY: tangle provision unprovision
+
+tangle: README.org
+	${EMACS} $< --batch --eval '(org-babel-tangle-file "README.org")'
+
+provision: tangle
+	${ANSIBLE} -i ${HOSTS} provision-cert-manager.yml
+
+unprovision: tangle
+	${ANSIBLE} -i ${HOSTS} unprovision-cert-manager.yml
+#+end_src
+
 * Inventory
 The inventory for this playbook is going to be the main kubernetes controller to install cert-manager and configure its deployment
 
@@ -34,10 +60,13 @@ boreas
 #+end_src
 
 * Group Variables
+The key group variables to look at are the following:
+
+- ca_crt: the certificate for the certificate authority to use, found locally on the machine running this playbook
+- ca_key: the server key for the certificate authority to use, found locally on the machine running this playbook
 
 #+begin_src yaml :tangle group_vars/all
 cert_manager_repourl: https://charts.jetstack.io
-cert_manager_loadbalancer_ip: 172.17.1.63
 cert_manager_namespace: cert-manager
 cert_manager_version: v1.13.0
 
@@ -49,6 +78,13 @@ ca_key: ~/certs/ca.key
 * Playbook Definition
 
 ** Provision
+We break the setup of cert-manager into four discrete chunks respectively
+
+- Create the namespace for the deployment
+- Add the certificate and key to the namespace created
+- Install cert-manager via helm
+- Deploy a cluster issuer using the certificate added
+
 #+begin_src yaml :tangle provision-cert-manager.yml
 ---
 - name: Provision the Cert-Manager on the cluster
@@ -62,6 +98,9 @@ ca_key: ~/certs/ca.key
 #+end_src
 
 ** Unprovision
+
+Unprovisioning is a simple two step, uninstall via helm and then delete the namespace to clean up any other resources.
+
 #+begin_src yaml :tangle unprovision-cert-manager.yml
 ---
 - name: Provision the Cert-Manager on the cluster
@@ -74,7 +113,7 @@ ca_key: ~/certs/ca.key
 
 * Roles
 
-** Helm Prerequisites
+Create the namespace for the installation.
 
 ** Create Cert Manager namespace
 
@@ -88,6 +127,8 @@ ca_key: ~/certs/ca.key
 #+end_src
 
 ** Add CA Secret
+
+Add the secret from the local machine into the cluster as a secret. This will use the group variable locations defined in the group variable section.
 
 #+begin_src yaml :tangle roles/add-ca-secret/templates/add-ca-secret.yml
 apiVersion: v1
@@ -108,24 +149,34 @@ type: kubernetes.io/tls
 #+end_src
 
 ** Install Cert-Manager
+Before installing cert-manager via helm add the repository where the helm chart can be found.
+
 #+begin_src yaml :tangle roles/install-helm-chart/tasks/main.yml
 - name: Add jetstack repository to the controller
   kubernetes.core.helm_repository:
     name: jetstack
     repo_url: "{{ cert_manager_repourl }}"
+#+end_src
 
+After the repo is available install the helm chart and wait for it to finish before proceeding. As part of the installed we need to pass installCRDs=true to the installation. This will provide resource definitions into the cluster that may be referenced by other deployments.
+
+#+begin_src yaml :tangle roles/install-helm-chart/tasks/main.yml
 - name: Install cert-manager via helm
   kubernetes.core.helm:
    name: cert-manager
    chart_ref: jetstack/cert-manager
    release_namespace: "{{ cert_manager_namespace }}"
-   update_repo_cache: True
+   update_repo_cache: true
+   wait: true
    set_values:
      - value: installCRDs=true
        value_type: string
+
 #+end_src
 
 ** Add Cluster Issuer
+
+Finally create a cluster issuer that can be used across all namespaces in the cluster that will issue valid ssl certificates for other deployments to use. This will reference the secret certificate that was created in the first step as the certificate authority for the issuer.
 
 #+begin_src yaml :tangle roles/add-cluster-issuer/templates/cert-manager-issuer.yml
 apiVersion: cert-manager.io/v1
@@ -145,6 +196,7 @@ spec:
 #+end_src
 
 ** Uninstall Helm Chart
+Uninstall the helm chart is a relatively simple command. Make sure the task completes before moving on to the namespace.
 
 #+begin_src yaml :tangle roles/uninstall-helm-chart/tasks/main.yml
 - name: Uninstall the helm chart
@@ -156,6 +208,8 @@ spec:
 #+end_src
 
 ** Delete cert-manager namespace
+Delete the namespace from the cluster.
+
 #+begin_src yaml :tangle roles/delete-namespace/tasks/main.yml
 - name: Delete Cert Manager registry namespace
   kubernetes.core.k8s:

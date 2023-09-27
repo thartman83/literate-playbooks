@@ -8,7 +8,8 @@
    name: cert-manager
    chart_ref: jetstack/cert-manager
    release_namespace: "{{ cert_manager_namespace }}"
-   update_repo_cache: True
+   update_repo_cache: true
+   wait: true
    set_values:
      - value: installCRDs=true
        value_type: string
