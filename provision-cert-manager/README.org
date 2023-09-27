@@ -112,10 +112,8 @@ Unprovisioning is a simple two step, uninstall via helm and then delete the name
 #+end_src
 
 * Roles
-
-Create the namespace for the installation.
-
 ** Create Cert Manager namespace
+Create the namespace for the installation.
 
 #+begin_src yaml :tangle roles/create-namespace/tasks/main.yml
 - name: Create Cert Manager registry namespace
