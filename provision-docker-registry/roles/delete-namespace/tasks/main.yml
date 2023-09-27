@@ -1,0 +1,6 @@
+- name: Delete the docker registry namespace
+  k8s:
+    name: "{{ docker_reg_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: absent

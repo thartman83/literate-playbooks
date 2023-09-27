@@ -1,0 +1,6 @@
+- name: Delete the docker-registry deployment
+  k8s:
+    name: "{{ docker_reg_label }}"
+    api_version: v1
+    kind: Deployment
+    state: absent

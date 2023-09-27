@@ -9,6 +9,7 @@
 - [[#general][General]]
   - [[#requirements-and-prerequisites][Requirements and Prerequisites]]
   - [[#usage][Usage]]
+- [[#makefile][Makefile]]
 - [[#inventory][Inventory]]
 - [[#group-variables][Group Variables]]
 - [[#playbook-definition][Playbook Definition]]
@@ -27,7 +28,7 @@
 The purpose of this set of playbooks is to install and uninstall a docker-registry on a kubernetes cluster with a dedicated storage space and externally accessible IP address to allow for outside clients the ability to push new docker images into the cluster and be available for deployments.
 
 ** Requirements and Prerequisites
-The playbook assumes that the inventory list of hosts provided is a controller node within a kubernetes cluster. Additionally the deployment will utilize the following other cluster deployments, specifically longhorn for storage allocation and cert-manager to provide a valid TLS certificate for the docker registry to use. See the [[file:~/projects/literate-playbooks/provision-longhorn/README.org][longhorn literate playbook]] and the [[file:~/projects/literate-playbooks/provision-cert-manager/README.org][Cert-Manager literate playbook]] for details on the setup and installation of those resources.
+The playbook assumes that the inventory list of hosts provided is a controller node within a kubernetes cluster. Additionally the deployment will utilize the following other cluster deployments, specifically longhorn for storage allocation and cert-manager to provide a valid TLS certificate for the docker registry to use. See the Longhorn session of the [[file:~/projects/literate-playbooks/provision-k3s/README.org][Provision k3s playbook]] and the [[file:~/projects/literate-playbooks/provision-cert-manager/README.org][Cert-Manager literate playbook]] for details on the setup and installation of those resources.
 
 ** Usage
 The playbooks can be invoked on the commandline using the normal ansible-playbook call.
@@ -42,6 +43,24 @@ Additionally, a makefile is available that will both re-tangle this file with an
 make provision
 #+end_src
 
+* Makefile
+Define a simple make file that will retangle the readme and rules for running the two playbooks
+#+begin_src Makefile :tangle Makefile
+ANSIBLE= ansible-playbook
+HOSTS= inventory/hosts.ini
+EMACS= emacs
+
+.PHONY: tangle provision unprovision
+
+tangle: README.org
+	${EMACS} $< --batch --eval '(org-babel-tangle-file "README.org")'
+
+provision: tangle
+	${ANSIBLE} -i ${HOSTS} provision-docker-registry.yml
+
+unprovision: tangle
+	${ANSIBLE} -i ${HOSTS} unprovision-docker-registry.yml
+#+end_src
 * Inventory
 The expected inventory for this playbook is a single controller for a kubernetes cluster.
 
@@ -103,7 +122,13 @@ Destroying the docker-registry on the cluster is comparatively simpler than depl
 - Delete the namespace
 
   Deleting the namespace will delete non-pod resources like secrets, certificates and services.
-
+#+begin_src yaml :tangle unprovision-docker-registry.yml
+- name: Unprovision the docker registry
+  hosts: controllers
+  roles:
+    - delete-deployment
+    - delete-namespace
+#+end_src
 * Roles
 ** Create Namespace
 
@@ -235,6 +260,8 @@ spec:
 #+end_src
 
 ** Create Service
+With the deployment deployed setup a service for the deployment to listen on the ip address provide in the group variables forwarding the 5000 traffic from the deployment to the 5000 port of the service.
+
 #+begin_src yaml :tangle :tangle roles/create-service/templates/registry-service.yml
 apiVersion: v1
 kind: Service
@@ -260,5 +287,26 @@ spec:
 #+end_src
 
 ** Delete deployment
+Delete the registry deployment which will delete the pods and the associated mounts/pvcs
+
+#+begin_src yaml :tangle roles/delete-deployment/tasks/main.yml
+- name: Delete the docker-registry deployment
+  k8s:
+    name: "{{ docker_reg_label }}"
+    api_version: v1
+    kind: Deployment
+    state: absent
+#+end_src
 
 ** Delete namespace
+
+Delete the namespace which will clean up the remaining resources
+
+#+begin_src yaml :tangle roles/delete-namespace/tasks/main.yml
+- name: Delete the docker registry namespace
+  k8s:
+    name: "{{ docker_reg_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: absent
+#+end_src

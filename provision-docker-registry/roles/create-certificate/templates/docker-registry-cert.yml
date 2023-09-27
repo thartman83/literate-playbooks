@@ -5,12 +5,12 @@ metadata:
   namespace: {{ docker_reg_namespace }}
 spec:
   secretName: {{ docker_reg_namespace }}-secret
-  commonName: 172.17.1.62
+  commonName: {{ docker_reg_service_ip }}
   dnsNames:
     - "*.{{ docker_reg_namespace }}.svc.cluster.local"
     - "*.{{ docker_reg_namespace }}"
   ipAddresses:
-    - "172.17.1.62"
+    - "{{ docker_reg_service_ip }}"
   issuerRef:
-    name: cert-manager-issuer
+    name: {{ cert_manager_issuer }}
     kind: ClusterIssuer
