@@ -10,9 +10,6 @@ tangle: README.org
 provision: tangle
 	${ANSIBLE} -i ${HOSTS} provision-k3s.yml
 
-check: tangle
-  ${ANSIBLE} -i ${HOSTS} provision-k3s.yml --check
-
 k3s-controller: tangle
 	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-controller"
 

@@ -1,0 +1,9 @@
+- name: Provision longhorn storage on all works
+  hosts: nodes
+  roles:
+    - role: common-packages
+
+- name: Provision longhorn controller
+  hosts: controller
+  roles:
+    - role: deploy-longhorn

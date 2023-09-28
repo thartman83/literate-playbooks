@@ -9,6 +9,7 @@
 :END:
 :CONTENTS:
 - [[#general][General]]
+  - [[#prerequisites][Prerequisites]]
 - [[#makefile][Makefile]]
 - [[#inventory][Inventory]]
 - [[#group-vars][Group Vars]]
@@ -19,17 +20,48 @@
 :END:
 
 * General
+The purpose of this playbook is to prepare cluster nodes for storage and to deploy a simple longhorn setup to the cluster via helm.
 
+** Prerequisites
+This playbook expects two groups defining the nodes of the cluster to install storage packages on to as well as the controller node to deploy the actual longhorn system. These groups are expected to be:
+
+- controller
+- nodes
 
 * Makefile
+The makefile for this playbook is fairly simple with just a single provision target and tangle target. The tangle target will re-tangle this README.org file. incorporating any updates into the playbook. The provision target will run the playbook (and re-tangle as well before hand).
 
 #+begin_src makefile :tangle Makefile
+ANSIBLE= ansible-playbook
+HOSTS=inventory/hosts.ini
+EMACS=emacs
 
+.PHONY: provision
+
+tangle: README.org
+	emacs $< --batch --eval '(org-babel-tangle-file "README.org")'
+
+provision: tangle
+	${ANSIBLE} -i ${HOSTS} provision-longhorn.yml
 #+end_src
 
 * Inventory
+As stated in th prerequisites section, the inventory expected for this playbook is the controller nodes of the cluster as well as all of the nodes of the cluster.
+
+#+begin_src ini :tangle inventory/hosts.ini
+[controller]
+boreas
+
+[nodes]
+boreas
+notus
+eurus
+zephyrus
+#+end_src
 
 * Group Vars
+The key group vars to pay attention to is the loadbalancer_ip which will define what ip address the longhorn ui will ask the loadbalancer for and the storage location where the nodes will use as the primary mount point for cluster volumes.
+
 #+begin_src yaml :tangle group_vars/all
 longhorn_storage_dir: /storage
 longhorn_helm_repourl: https://charts.longhorn.io
@@ -38,22 +70,19 @@ longhorn_loadbalancer_ip: 172.17.1.61
 #+end_src
 
 * Playbooks
+
+The playbook is split into two separate plays, the first will ensure that all of the nodes have the correct OS level packages installed on them and the second actually deploys longhorn on the controller node via helm.
+
 #+begin_src yaml :tangle provision-longhorn.yml
 - name: Provision longhorn storage on all works
   hosts: nodes
   roles:
-    - role: k3s-storage-common
-  tags:
-    - longhorn-common
-    - longhorn
+    - role: common-packages
 
 - name: Provision longhorn controller
   hosts: controller
   roles:
-    - role: k3s-storage-controller
-  tags:
-    - longhorn-controller
-    - longhorn
+    - role: deploy-longhorn
 #+end_src
 
 * Roles
@@ -61,7 +90,7 @@ longhorn_loadbalancer_ip: 172.17.1.61
 ** Common packages
 For all nodes in the cluster prepare the storage location and install packages that longhorn will need for provisioning storage across the nodes.
 
-#+begin_src yaml :tangle roles/k3s-storage-common/tasks/main.yml
+#+begin_src yaml :tangle roles/common-packages/tasks/main.yml
 - name: Create the storage directory if it does not exist
   ansible.builtin.file:
     path: "{{ longhorn_storage_dir }}"
@@ -78,21 +107,9 @@ For all nodes in the cluster prepare the storage location and install packages t
 
 ** Longhorn deployment
 
-#+begin_src sh
-helm install longhorn longhorn/longhorn --namespace longhorn-system --create-namespace --set defaultSettings.defaultDataPath="/storage" --set service.ui.loadBalancerIP="172.17.1.61" --set service.ui.type="LoadBalancer"
-#+end_src
+Now we add the longhorn chart repository into helm and then deploy it. The task will use the group variables defined for the namespace, service ip address and the default storage location on the nodes as parameters. In addition the helm will wait until the chart has been deployed before proceeding.
 
-#+begin_src yaml :tangle roles/k3s-storage-controller/tasks/main.yml
-- name: Install Longhorn IO prereqs on all nodes
-  apt:
-    pkg:
-      - python3-pip
-    state: present
-
-- name: Install PyYAML python package
-  ansible.builtin.pip:
-    name: PyYAML
-
+#+begin_src yaml :tangle roles/deploy-longhorn/tasks/main.yml
 - name: Add longhorn repository to the controller
   kubernetes.core.helm_repository:
     name: longhorn
@@ -104,7 +121,8 @@ helm install longhorn longhorn/longhorn --namespace longhorn-system --create-nam
    chart_ref: longhorn/longhorn
    release_namespace: "{{ longhorn_namespace }}"
    create_namespace: true
-   update_repo_cache: True
+   update_repo_cache: true
+   wait: true
    set_values:
      - value: service.ui.loadBalancerIP="{{ longhorn_loadbalancer_ip }}"
        value_type: string

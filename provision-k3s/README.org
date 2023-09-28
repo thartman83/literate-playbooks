@@ -47,9 +47,6 @@ tangle: README.org
 provision: tangle
 	${ANSIBLE} -i ${HOSTS} provision-k3s.yml
 
-check: tangle
-  ${ANSIBLE} -i ${HOSTS} provision-k3s.yml --check
-
 k3s-controller: tangle
 	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-controller"
 
@@ -233,7 +230,7 @@ In order to run k8s ansible tasks the controller will need the following additio
   pip:
     name:
       - kubernetes
-      - pyYAML
+      - PyYAML
       - jsonpatch
     executable: pip3
 #+end_src
@@ -283,7 +280,6 @@ Both these commands should probably be replaced with the k8s module instead of r
 #+end_src
 
 ** Controller Helm
-
 Make sure that helm is installed on the controller, first we will need to check that git is available
 
 #+begin_src yaml :tangle roles/k3s-helm-controller/tasks/main.yml

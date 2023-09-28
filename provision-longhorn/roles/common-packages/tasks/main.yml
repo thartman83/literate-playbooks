@@ -1,0 +1,12 @@
+- name: Create the storage directory if it does not exist
+  ansible.builtin.file:
+    path: "{{ longhorn_storage_dir }}"
+    state: directory
+
+- name: Install common nfs prereqs on all nodes
+  package:
+    name:
+      - nfs-common
+      - open-iscsi
+      - util-linux
+    state: present

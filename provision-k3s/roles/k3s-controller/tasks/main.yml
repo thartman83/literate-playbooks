@@ -47,6 +47,6 @@
   pip:
     name:
       - kubernetes
-      - pyYAML
+      - PyYAML
       - jsonpatch
     executable: pip3
