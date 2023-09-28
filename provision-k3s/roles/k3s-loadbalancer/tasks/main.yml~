@@ -1,0 +1,11 @@
+- name: Add helm metallb chart repository
+  helm_repository:
+    name: metallb
+    repo_url: "{{ metallb_helm_repourl }}"
+
+- name: Deploy metal loadbalancer to the cluster
+  helm:
+    name: metallb
+    chart_ref: metallb/metallb
+    release_namespace: "{{ metallb_namespace }}"
+    create_namespace: true

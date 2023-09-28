@@ -1,0 +1,21 @@
+- name: Add helm metallb chart repository
+  kubernetes.core.helm_repository:
+    name: metallb
+    repo_url: "{{ metallb_helm_repourl }}"
+
+- name: Deploy metal loadbalancer to the cluster
+  kubernetes.core.helm:
+    name: metallb
+    chart_ref: metallb/metallb
+    release_namespace: "{{ metallb_namespace }}"
+    create_namespace: True
+    wait: True
+    update_repo_cache: True
+
+- name: Apply metallb ip address pool configuration
+  k8s:
+    definition: "{{ lookup('template','templates/metallb-ippool.yml') | from_yaml }}"
+
+- name: Apply metallb L2 Advertisement
+  k8s:
+    definition: "{{ lookup('template', 'templates/metallb-l2advertisement.yml') | from_yaml }}"

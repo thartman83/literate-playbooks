@@ -1,0 +1,7 @@
+- name: Add worker node type for all nodes
+  command: kubectl label node {{ item }} kubernetes.io/role=worker
+  loop: "{{ k3s_nodes }}"
+
+- name: Add worker node type for all nodes
+  command: kubectl label node {{ item }} node-type=worker
+  loop: "{{ k3s_nodes }}"

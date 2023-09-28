@@ -1,0 +1,51 @@
+- name: The helm controller will need git installed
+  package:
+    name:
+      - git
+
+- name: Ensure that helm is installed
+  command: which helm
+  register: which_helm
+  ignore_errors: True
+
+- name: Setup the kube configuration directory
+  file:
+    path: "{{ kube_config_dir }}"
+    state: directory
+
+- name: Grab the kubectl config
+  command: k3s kubectl config view --raw
+  register: kube_config
+
+- name: Create the config file
+  copy:
+    content: "{{ kube_config.stdout }}"
+    dest: "{{ kube_config_dir }}/config"
+    mode: 600
+
+- name: Add the kube config into the environment
+  lineinfile:
+    path: /etc/environment
+    line: "KUBECONFIG={{ kube_config_dir }}/config"
+
+- name: Download the helm source
+  get_url:
+    url: "{{ helm_src }}"
+    dest: "/tmp"
+    checksum: "sha256:{{ helm_checksum }}"
+  when: "which_helm.rc == 1"
+
+- name: Unarchive the helm source
+  unarchive:
+    src: "/tmp/{{ helm_archive }}"
+    dest: "/tmp/"
+    remote_src: True
+  when: "which_helm.rc == 1"
+
+- name: Move helm into usr/local/bin
+  copy:
+    remote_src: True
+    src: /tmp/linux-amd64/helm
+    dest: /usr/local/bin/
+    mode: 700
+  when: "which_helm.rc == 1"

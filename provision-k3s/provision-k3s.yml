@@ -1,0 +1,32 @@
+---
+- name: Provision a new k3s cluster controller
+  hosts: controller
+  roles:
+    - role: k3s-controller
+  tags: k3s-controller
+
+- name: Provision the k3s cluter workers
+  hosts: workers
+  roles:
+    - role: k3s-worker
+  tags: k3s-workers
+
+- name: Provision nodes as workers roles
+  hosts: controller
+  roles:
+    - role: k3s-worker-roles
+  tags:
+    - k3s-workers
+
+- name: Provision helm on the controller
+  hosts: controller
+  roles:
+    - role: k3s-helm-controller
+  tags:
+    - helm
+
+- name: Provision metallb loadbalancer on the cluster
+  hosts: controller
+  roles:
+    - role: k3s-loadbalancer
+  tags: loadbalancer

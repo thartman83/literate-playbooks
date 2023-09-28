@@ -1,0 +1,18 @@
+k3spasswd: k3spasswd
+net_prefix: 172.17.1.
+k3s_primary_controller: boreas
+k3s_nodes:
+  - boreas
+  - notus
+  - eurus
+  - zephyrus
+
+kube_config_dir: /root/.kube
+helm_src: https://get.helm.sh/helm-v3.12.3-linux-amd64.tar.gz
+helm_archive: helm-v3.12.3-linux-amd64.tar.gz
+helm_checksum: 1b2313cd198d45eab00cc37c38f6b1ca0a948ba279c29e322bdf426d406129b5
+helm_gpgkey: "672C 657B E06B 4B30 969C 4A57 4614 49C2 5E36 B98E"
+
+metallb_helm_repourl: https://metallb.github.io/metallb
+metallb_namespace: metallb-system
+metallb_iprange: 172.17.1.60-172.17.1.69

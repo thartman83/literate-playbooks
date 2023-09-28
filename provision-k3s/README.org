@@ -1,0 +1,412 @@
+-*- mode: org; mode: org-make-toc-mode -*-
+#+TITLE: Provision K3S Cluster
+#+AUTHOR: Tom Hartman
+#+STARTUP: overview
+* Table of Contents
+:PROPERTIES:
+:TOC:      :include all :ignore this
+:END:
+:CONTENTS:
+- [[#general][General]]
+  - [[#prerequisites][Prerequisites]]
+- [[#makefile][Makefile]]
+- [[#inventory][Inventory]]
+- [[#group-variables][Group Variables]]
+- [[#playbook-definition][Playbook Definition]]
+- [[#roles][Roles]]
+  - [[#setup-k3s-on-controller][Setup k3s on controller]]
+  - [[#setup-k3s-on-the-worker][Setup k3s on the worker]]
+  - [[#let-workers-be-workers][Let workers be workers]]
+  - [[#controller-helm][Controller Helm]]
+  - [[#load-balancer][Load Balancer]]
+:END:
+
+* General
+The purpose of this playbook is to setup a barebones kubernetes cluster on a set of target hosts using k3s. In addition to installing and configuring the cluster, this playbook will also install helm on the cluster controller node as well as install the loadbalancer Metallb on the cluster available for use for other deployments.
+
+** Prerequisites
+This playbook expects to have the three inventory groups available:
+
+- controllers: sometimes referred to as a 'master' node, instead throughout this playbook I will be referring to them as the controllers
+- workers: workers are nodes within the cluster that aren't the controllers
+- nodes: the list of all hosts that will be nodes within the cluster
+
+* Makefile
+The makefile for this playbook has multiple targets each targeting a specific play within the playbook by specifying tags. This was mostly useful when debugging the playbook but still could be useful in certain situations.
+
+#+begin_src makefile :tangle Makefile
+ANSIBLE= ansible-playbook
+HOSTS=inventory/hosts.ini
+EMACS=emacs
+
+.PHONY: provision k3s-controller k3s-workers helm loadbalancer tangle
+
+tangle: README.org
+	emacs $< --batch --eval '(org-babel-tangle-file "README.org")'
+
+provision: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml
+
+k3s-controller: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-controller"
+
+k3s-workers: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "k3s-workers"
+
+helm: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "helm"
+
+loadbalancer: tangle
+	${ANSIBLE} -i ${HOSTS} provision-k3s.yml --tags "loadbalancer"
+
+unprovision: tangle
+	${ANSIBLE} -i ${HOSTS} unprovision-k3s.yml
+#+end_src
+
+* Inventory
+Three inventory groups are defined and expected throughout this playbook, controllers, workers, and nodes. Because this a fairly simple cluster the is no HA and it uses a single controller with 3 other worker nodes.
+
+#+begin_src ini :tangle inventory/hosts.ini
+[controller]
+boreas
+
+[workers]
+notus
+eurus
+zephyrus
+
+[nodes]
+boreas
+notus
+eurus
+zephyrus
+#+end_src
+
+* Group Variables
+Group variables to note are the following:
+
+- k3spasswd: this is the password that k3s will be using for setting up the cluster, obviously this isn't secure so change this and keep this secret
+- net_prefix: this is the network prefix that the nodes are on and will be used to determine what the ip address is of the controller node
+- k3s_primary_controller: the DNS name of the controller (should match the inventory file) that will be used by the other nodes to install k3s from the controller
+- k3s_nodes: the list of nodes, this should be the same as the values in the inventory file
+- metallb_iprange: the range of ip address that metallb is able to use for other services when they request service on specific ip address. These should be only available to metallb and shouldn't be in a range that your networks dhcp server may issue to other clients.
+
+#+begin_src yaml :tangle group_vars/all
+k3spasswd: k3spasswd
+net_prefix: 172.17.1.
+k3s_primary_controller: boreas
+k3s_nodes:
+  - boreas
+  - notus
+  - eurus
+  - zephyrus
+
+kube_config_dir: /root/.kube
+helm_src: https://get.helm.sh/helm-v3.12.3-linux-amd64.tar.gz
+helm_archive: helm-v3.12.3-linux-amd64.tar.gz
+helm_checksum: 1b2313cd198d45eab00cc37c38f6b1ca0a948ba279c29e322bdf426d406129b5
+helm_gpgkey: "672C 657B E06B 4B30 969C 4A57 4614 49C2 5E36 B98E"
+
+metallb_helm_repourl: https://metallb.github.io/metallb
+metallb_namespace: metallb-system
+metallb_iprange: 172.17.1.60-172.17.1.69
+#+end_src
+
+* Playbook Definition
+
+Because different roles will need to be applied to different sets of hosts in different order this playbook is broken down into different plays. They are in order:
+
+- Install k3s onto the controller node
+- Install k3s on the worker nodes from the controller
+- From the controller node, mark the other nodes as workers
+- Install Helm on the controller node
+- Install the Metallb loadbalancer via helm into the cluster
+
+#+begin_src yaml :tangle provision-k3s.yml
+---
+- name: Provision a new k3s cluster controller
+  hosts: controller
+  roles:
+    - role: k3s-controller
+  tags: k3s-controller
+
+- name: Provision the k3s cluter workers
+  hosts: workers
+  roles:
+    - role: k3s-worker
+  tags: k3s-workers
+
+- name: Provision nodes as workers roles
+  hosts: controller
+  roles:
+    - role: k3s-worker-roles
+  tags:
+    - k3s-workers
+
+- name: Provision helm on the controller
+  hosts: controller
+  roles:
+    - role: k3s-helm-controller
+  tags:
+    - helm
+
+- name: Provision metallb loadbalancer on the cluster
+  hosts: controller
+  roles:
+    - role: k3s-loadbalancer
+  tags: loadbalancer
+#+end_src
+
+* Roles
+** Setup k3s on controller
+
+First step is to install k3s on the controllers. First we check to see if the controller already has k3s installed. Running which seems to be the simplest way to check this though I wish there was a built in command to accomplish this rather than having to do stuff like ignoring errors and returning an rc value.
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Check if k3s is already installed on the controller
+  tags: k3s-controller
+  command: which k3s
+  register: which_k3s
+  ignore_errors: True
+  changed_when: "which_k3s.rc == 1"
+#+end_src
+
+K3s will need to know what the ip address is of the controller
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Get the ip address
+  tags: k3s-controller
+  shell:
+    cmd: |-
+      ip a | sed -n '{{ ipaddr_regex }}'
+  vars:
+    ipaddr_regex: 's/.*inet \({{ net_prefix }}[0-9]*\).*/\1/p'
+  register: ipaddr
+  when: "which_k3s.rc == 1"
+#+end_src
+
+Again doing this using commands rather than built commands feels a little off but it works.
+
+And now we do something we know we shouldn't do and curl directly into a subshell but again this is the normal installation method unfortunately.
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Provision the controller nodes
+  tags: k3s-controller
+  shell:
+    cmd: |-
+      curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --disable servicelb --token "{{ k3spasswd }}" --node-ip "{{ ipaddr.stdout }}" --disable-cloud-controller --disable local-storage
+  when: "which_k3s.rc == 1"
+
+- name: Reboot controller nodes
+  tags: k3s-controller
+  reboot:
+    reboot_timeout: 1000
+  when: "which_k3s.rc == 1"
+#+end_src
+
+We have to follow up the installation with a reboot unfortunately but once that is done we should see the controller show up as a node in kubectl.
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Check that the control plane is running
+  tags: k3s-controller
+  command: kubectl get nodes
+  register: kubectl_nodes_data
+  failed_when: (kubectl_nodes_data.stdout | regex_search(control_plane_regex, multiline=True)) == ""
+  vars:
+    control_plane_regex: '{{ inventory_hostname }}.*Ready.*control-plane,master'
+#+end_src
+
+In order to run k8s ansible tasks the controller will need the following additional packages installed: python-kubernetes, pyYaml, and jsonpatch.
+
+#+begin_src yaml :tangle roles/k3s-controller/tasks/main.yml
+- name: Install required packages for ansible k8s module
+  tags: k3s-controller
+  package:
+    name:
+      - python3-pip
+
+- name: Install python packages
+  tags: k3s-controller
+  pip:
+    name:
+      - kubernetes
+      - PyYAML
+      - jsonpatch
+    executable: pip3
+#+end_src
+
+** Setup k3s on the worker
+Now we need to install k3s on each of the workers from the controller if it is not already present
+
+First check to see if k3s already exists on the node.
+#+begin_src yaml :tangle roles/k3s-worker/tasks/main.yml
+- name: Check if k3s is already installed on the worker
+  command: which k3s
+  register: which_k3s
+  ignore_errors: True
+  changed_when: "which_k3s.rc == 1"
+#+end_src
+
+If it isn't installed install it from the controller node via curl. Curling into sh isn't the greatest way of installing things (read potentially dangerous) but for the moment this is the simplest way.
+#+begin_src yaml :tangle roles/k3s-worker/tasks/main.yml
+- name: Provision the controller nodes
+  shell:
+    cmd: |-
+      curl -sfL https://get.k3s.io | K3S_URL=https://{{ k3s_primary_controller }}:6443 K3S_TOKEN={{ k3spasswd }} sh -
+  when: "which_k3s.rc == 1"
+
+- name: Reboot the worker node
+  reboot:
+    reboot_timeout: 1000
+  when: "which_k3s.rc == 1"
+#+end_src
+
+** Let workers be workers
+
+We now need to use the controller to mark all of the nodes as viable workers.
+
+Both these commands should probably be replaced with the k8s module instead of running raw commands.
+
+#+begin_src yaml :tangle roles/k3s-worker-roles/tasks/main.yml
+- name: Add worker node type for all nodes
+  command: kubectl label node {{ item }} kubernetes.io/role=worker
+  loop: "{{ k3s_nodes }}"
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-worker-roles/tasks/main.yml
+- name: Add worker node type for all nodes
+  command: kubectl label node {{ item }} node-type=worker
+  loop: "{{ k3s_nodes }}"
+#+end_src
+
+** Controller Helm
+Make sure that helm is installed on the controller, first we will need to check that git is available
+
+#+begin_src yaml :tangle roles/k3s-helm-controller/tasks/main.yml
+- name: The helm controller will need git installed
+  package:
+    name:
+      - git
+
+- name: Ensure that helm is installed
+  command: which helm
+  register: which_helm
+  ignore_errors: True
+
+#+end_src
+
+For the moment we are using which command to check that the executable is available. This can probably be accomplish by using stat and looping over the environment path but for the moment this will do.
+
+Setup a directory for kube configuration that helm will use locally. We export the kubectl configuration and then link it in /etc/environment.
+
+#+begin_src yaml :tangle roles/k3s-helm-controller/tasks/main.yml
+- name: Setup the kube configuration directory
+  file:
+    path: "{{ kube_config_dir }}"
+    state: directory
+
+- name: Grab the kubectl config
+  command: k3s kubectl config view --raw
+  register: kube_config
+
+- name: Create the config file
+  copy:
+    content: "{{ kube_config.stdout }}"
+    dest: "{{ kube_config_dir }}/config"
+    mode: 600
+
+- name: Add the kube config into the environment
+  lineinfile:
+    path: /etc/environment
+    line: "KUBECONFIG={{ kube_config_dir }}/config"
+#+end_src
+
+Download the helm package and verify. Then move the executable into /usr/local/bin.
+
+#+begin_src yaml :tangle roles/k3s-helm-controller/tasks/main.yml
+- name: Download the helm source
+  get_url:
+    url: "{{ helm_src }}"
+    dest: "/tmp"
+    checksum: "sha256:{{ helm_checksum }}"
+  when: "which_helm.rc == 1"
+
+- name: Unarchive the helm source
+  unarchive:
+    src: "/tmp/{{ helm_archive }}"
+    dest: "/tmp/"
+    remote_src: True
+  when: "which_helm.rc == 1"
+
+- name: Move helm into usr/local/bin
+  copy:
+    remote_src: True
+    src: /tmp/linux-amd64/helm
+    dest: /usr/local/bin/
+    mode: 700
+  when: "which_helm.rc == 1"
+#+end_src
+
+** Load Balancer
+
+Add metal load balancer to the cluster.
+
+Add the repository url for metallb into helm.
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
+- name: Add helm metallb chart repository
+  kubernetes.core.helm_repository:
+    name: metallb
+    repo_url: "{{ metallb_helm_repourl }}"
+#+end_src
+
+Deploy the chart via helm. The deployment can take a while and because we will need it in future steps we will wait for it to complete.
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
+- name: Deploy metal loadbalancer to the cluster
+  kubernetes.core.helm:
+    name: metallb
+    chart_ref: metallb/metallb
+    release_namespace: "{{ metallb_namespace }}"
+    create_namespace: True
+    wait: True
+    update_repo_cache: True
+#+end_src
+
+With the chart deployed we need to create an IP Address pool resource that represents the list of ip address available for metallb to allocate as services.
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/templates/metallb-ippool.yml
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-pool
+  namespace: {{ metallb_namespace }}
+spec:
+  addresses:
+  - {{ metallb_iprange }}
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
+- name: Apply metallb ip address pool configuration
+  k8s:
+    definition: "{{ lookup('template','templates/metallb-ippool.yml') | from_yaml }}"
+#+end_src
+
+Deploy the L2 Advertisement resource. This will respond internally and external to ARP requests for any services that are created.
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/templates/metallb-l2advertisement.yml
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: default
+  namespace: {{ metallb_namespace }}
+spec:
+  ipAddressPools:
+  - default-pool
+#+end_src
+
+#+begin_src yaml :tangle roles/k3s-loadbalancer/tasks/main.yml
+- name: Apply metallb L2 Advertisement
+  k8s:
+    definition: "{{ lookup('template', 'templates/metallb-l2advertisement.yml') | from_yaml }}"
+#+end_src
