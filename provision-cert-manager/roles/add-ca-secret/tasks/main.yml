@@ -1,0 +1,3 @@
+- name: Create the Certificate Authority secret
+  k8s:
+    definition: "{{ lookup('template', 'templates/add-ca-secret.yml') }}"

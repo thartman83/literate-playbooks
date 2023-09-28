@@ -1,0 +1,7 @@
+cert_manager_repourl: https://charts.jetstack.io
+cert_manager_namespace: cert-manager
+cert_manager_version: v1.13.0
+
+ca_secret: ca-secret
+ca_crt: ~/certs/ca.crt
+ca_key: ~/certs/ca.key

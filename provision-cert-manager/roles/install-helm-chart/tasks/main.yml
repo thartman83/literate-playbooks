@@ -1,0 +1,15 @@
+- name: Add jetstack repository to the controller
+  kubernetes.core.helm_repository:
+    name: jetstack
+    repo_url: "{{ cert_manager_repourl }}"
+
+- name: Install cert-manager via helm
+  kubernetes.core.helm:
+   name: cert-manager
+   chart_ref: jetstack/cert-manager
+   release_namespace: "{{ cert_manager_namespace }}"
+   update_repo_cache: true
+   wait: true
+   set_values:
+     - value: installCRDs=true
+       value_type: string

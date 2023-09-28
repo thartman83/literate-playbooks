@@ -1,0 +1,3 @@
+- name: Create the issuer for cert-manager
+  k8s:
+    definition: "{{ lookup('template', 'templates/cert-manager-issuer.yml') }}"
