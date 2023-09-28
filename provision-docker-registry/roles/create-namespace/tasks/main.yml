@@ -1,0 +1,6 @@
+- name: Create a docker registry namespace
+  kubernetes.core.k8s:
+    name: "{{ docker_reg_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present

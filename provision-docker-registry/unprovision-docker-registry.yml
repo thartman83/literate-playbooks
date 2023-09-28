@@ -1,0 +1,5 @@
+- name: Unprovision the docker registry
+  hosts: controllers
+  roles:
+    - delete-deployment
+    - delete-namespace

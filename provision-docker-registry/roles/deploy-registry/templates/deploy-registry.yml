@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: {{ docker_reg_label }}
+  name: {{ docker_reg_label }}
+  namespace: {{ docker_reg_namespace }}
+spec:
+  replicas: {{ docker_reg_replicas }}
+  selector:
+    matchLabels:
+      run: {{ docker_reg_label }}
+  template:
+    metadata:
+      labels:
+        run: {{ docker_reg_label }}
+        app: {{ docker_reg_label }}
+    spec:
+      nodeSelector:
+        node-type: worker
+      containers:
+      - name: {{ docker_reg_label }}
+        image: registry:2
+        ports:
+        - containerPort: {{ docker_reg_container_port }}
+        volumeMounts:
+        - name: docker-registry-secret
+          mountPath: "/certs"
+          readOnly: true
+        - name: registry-data
+          mountPath: /var/lib/registry
+          subPath: registry
+        env:
+        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+          value: "/certs/tls.crt"
+        - name: REGISTRY_HTTP_TLS_KEY
+          value: "/certs/tls.key"
+      volumes:
+      - name: docker-registry-secret
+        secret:
+          secretName: docker-registry-secret
+      - name: registry-data
+        persistentVolumeClaim:
+          claimName: {{ docker_reg_pvc_name }}
