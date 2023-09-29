@@ -1,3 +1,4 @@
+-*- mode: org; mode: org-make-toc-mode -*-
 #+TITLE: Literate Playbooks
 #+AUTHOR: Tom Hartman
 
@@ -13,6 +14,10 @@
 - [[#playbooks][Playbooks]]
   - [[#archiso][ArchIso]]
   - [[#provision-cluster][Provision Cluster]]
+  - [[#provision-k3s][Provision K3S]]
+  - [[#provision-longhorn][Provision Longhorn]]
+  - [[#provision-cert-manager][Provision Cert-Manager]]
+  - [[#provision-docker-registry][Provision Docker Registry]]
 :END:
 
 * General
@@ -48,14 +53,73 @@ Another benefit of writing scripts this way is that I've found that at least for
 
 * Playbooks
 
+All playbooks in this repository can be run using the normal ansible-playbook command or through make, with a target for each playbook available for use.
+
 ** ArchIso
 
 An ansible playbook to generate a custom arch live environment that when installed to bootable media will allow headless ssh access based on a set key pair.
 
 [[file:/archiso][Archiso]]
 
+#+begin_src makefile :tangle Makefile
+archiso:
+	make -C archiso
+#+end_src
+
 ** Provision Cluster
 
-An set of two ansible playbooks to spin up and spin down a set of Virtual Machines on a target host. The virtual machines will be pre-configured to provide headless ssh access through a provided ssh key as well as have python pre-installed for further ansible playbooks to be run against them.
+A set of two ansible playbooks to spin up and spin down a set of Virtual Machines on a target host. The virtual machines will be pre-configured to provide headless ssh access through a provided ssh key as well as have python pre-installed for further ansible playbooks to be run against them.
 
 [[file:/provision-cluster][Provision Cluster]]
+
+#+begin_src makefile :tangle Makefile
+cluster:
+	make -C provision-cluster provision
+
+clean_cluster:
+	make -C provision-cluster unprovision
+#+end_src
+
+** Provision K3S
+
+An ansible playbook to create a relatively simple k3s cluster given a set of nodes. Part of the provisioning process will install helm as well as utility packages on the nodes to facilitate kubernetes resource deployments.
+
+[[file:provision-k3s/README.org][Provision K3s]]
+
+#+begin_src makefile :tangle Makefile
+k3s:
+	make -C provision-k3s provision
+#+end_src
+
+** Provision Longhorn
+
+An ansible playbook to setup and deploy a simple longhorn system on to a kubernetes cluster via helm. Longhorn will use the local storage of the nodes for volume and claims management.
+
+[[file:provision-longhorn/README.org][Provision Longhorn]]
+
+#+begin_src makefile :tangle Makefile
+longhorn:
+	make -C provision-longhorn provision
+#+end_src
+
+** Provision Cert-Manager
+
+An ansible playbook to setup cert-manager system on a kubernetes cluster via helm. The installation will accept a certificate key pair to use as the CA when issuing certificates for other deployments.
+
+[[file:provision-cert-manager/README.org][Provision Cert Manager]]
+
+#+begin_src makefile :tangle Makefile
+cert-manager:
+	make -C provision-cert-manager provision
+#+end_src
+
+** Provision Docker Registry
+
+An ansible playbook to deploy a docker registry for the cluster. The playbook will create a new Certificate generated from a Cluster Issuer resource to use to encrypt traffic to the registry.
+
+[[file:provision-docker-registry/README.org][Provision Docker Registry]]
+
+#+begin_src makefile :tangle Makefile
+docker-registry:
+	make -C provision-docker-registry provision
+#+end_src
