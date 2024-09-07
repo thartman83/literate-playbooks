@@ -65,6 +65,35 @@ ansible-playbook -i inventory/hosts provision-cluster.yml
 #+begin_src sh
 ansible-playbook -i inventory/hosts unprovision-cluster.yml
 #+end_src
+** Additional Configurations
+
+If you are planning on spinning these vms up and down repeatedly for convenience you should consider configuring your dhcp server to issue static leases to the mac addresses of the VMs. This will make adding ssh configuration a lot simpler and will cut down on arp table silliness. Additionally because each time the VM comes up it will have a different ssh host signature I recommend disabling strict host checking for these IPs for the vm hosts in your ssh config. It will cut down on random entries in your known_hosts file and will make them easier to use for subsequent playbooks/ansible tasks. See below for example configuration.
+
+#+begin_src conf
+Host boreas
+     Hostname 172.17.1.220
+     User root
+     IdentityFile ssh_rsa
+     IdentitiesOnly yes
+     StrictHostKeyChecking no
+     UserKnownHostsFile /dev/null
+#+end_src
+
+There are obvious security concerns with disabling host key checking so beware that those do exist. However if you are running these in a home lab like I am, those concerns are somewhat minimal.
+** Debuging
+If you are having trouble accessing the VMs after they have been provisioned I recommend adding the following line to the virt-customize role command, and re-provisioning them.
+
+#+begin_src
+--root-password password:password
+#+end_src
+
+This will enable the root password for the virtual machine to be 'password'. From the vm host you can get an interactive console by issuing the following command:
+
+#+begin_src sh
+sudo virsh console boreas
+#+end_src
+
+Then you can debug access issues from within the virtual machine.
 
 * Inventory
 
@@ -138,6 +167,7 @@ virt_install_package: virt-install
 bridge_utils_package: bridge-utils
 qemu_img_package: qemu-img
 libvirt_package: libvirt
+dnspython_package: python-dnspython
 #+end_src
 
 ** VM Host Services
@@ -245,6 +275,7 @@ We will need the following packages to be installed on the VM host in order to s
       - "{{ qemu_img_package }}"
       - "{{ libvirt_package }}"
       - "{{ guestfs_tools_package }}"
+      - "{{ dnspython_package }}"
     state: present
 
 #+end_src
